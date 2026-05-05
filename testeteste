@@ -24,8 +24,21 @@ local CoreGui = game:GetService("CoreGui")
 local CollectionService = game:GetService("CollectionService")
 
 local player = Players.LocalPlayer
-local RE = ReplicatedStorage:WaitForChild("RE")
-local RF = ReplicatedStorage:WaitForChild("RF")
+
+local function getRemoteFolder(name)
+    local folder = ReplicatedStorage:FindFirstChild(name)
+    if folder then return folder end
+
+    folder = ReplicatedStorage:WaitForChild(name, 5)
+    if folder then return folder end
+
+    folder = Instance.new("Folder")
+    folder.Name = name
+    return folder
+end
+
+local RE = getRemoteFolder("RE")
+local RF = getRemoteFolder("RF")
 
 local function safeRequire(obj)
     if not obj then return nil end
