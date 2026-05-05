@@ -1,4 +1,4 @@
-local Rayfield
+Rayfield = nil
 do
     local ok, result = pcall(function()
         local source = game:HttpGet("https://sirius.menu/rayfield", true)
@@ -38,18 +38,18 @@ do
     end
 end
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
-local HttpService = game:GetService("HttpService")
-local GuiService = game:GetService("GuiService")
-local CoreGui = game:GetService("CoreGui")
-local CollectionService = game:GetService("CollectionService")
+Players = game:GetService("Players")
+ReplicatedStorage = game:GetService("ReplicatedStorage")
+RunService = game:GetService("RunService")
+Lighting = game:GetService("Lighting")
+HttpService = game:GetService("HttpService")
+GuiService = game:GetService("GuiService")
+CoreGui = game:GetService("CoreGui")
+CollectionService = game:GetService("CollectionService")
 
-local player = Players.LocalPlayer
+player = Players.LocalPlayer
 
-local function getRemoteFolder(name)
+function getRemoteFolder(name)
     local folder = ReplicatedStorage:FindFirstChild(name)
     if folder then return folder end
 
@@ -61,10 +61,10 @@ local function getRemoteFolder(name)
     return folder
 end
 
-local RE = getRemoteFolder("RE")
-local RF = getRemoteFolder("RF")
+RE = getRemoteFolder("RE")
+RF = getRemoteFolder("RF")
 
-local function safeRequire(obj)
+function safeRequire(obj)
     if not obj then return nil end
     local ok, result = pcall(require, obj)
     if ok then return result end
@@ -72,35 +72,35 @@ local function safeRequire(obj)
     return nil
 end
 
-local ModulesFolder = ReplicatedStorage:FindFirstChild("Modules")
-local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
-local ControllersFolder = ReplicatedStorage:FindFirstChild("Controllers")
-local SharedUtilFolder = SharedFolder and SharedFolder:FindFirstChild("Util")
+ModulesFolder = ReplicatedStorage:FindFirstChild("Modules")
+SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
+ControllersFolder = ReplicatedStorage:FindFirstChild("Controllers")
+SharedUtilFolder = SharedFolder and SharedFolder:FindFirstChild("Util")
 
-local PlayerData = safeRequire(ModulesFolder and ModulesFolder:FindFirstChild("PlayerData"))
-local ItemData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("ItemData"))
-local Clock = safeRequire(SharedFolder and SharedFolder:FindFirstChild("Clock"))
-local StateUtil = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StateUtil"))
-local StatsModule = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StatsModule"))
-local AreaData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("AreaData"))
-local GameConfig = safeRequire(SharedFolder and SharedFolder:FindFirstChild("GameConfig"))
-local UniverseData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("UniverseData"))
-local BattlePassUtil = safeRequire(SharedUtilFolder and SharedUtilFolder:FindFirstChild("BattlePassUtil"))
-local BoxController = safeRequire(ControllersFolder and ControllersFolder:FindFirstChild("BoxController"))
+PlayerData = safeRequire(ModulesFolder and ModulesFolder:FindFirstChild("PlayerData"))
+ItemData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("ItemData"))
+Clock = safeRequire(SharedFolder and SharedFolder:FindFirstChild("Clock"))
+StateUtil = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StateUtil"))
+StatsModule = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StatsModule"))
+AreaData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("AreaData"))
+GameConfig = safeRequire(SharedFolder and SharedFolder:FindFirstChild("GameConfig"))
+UniverseData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("UniverseData"))
+BattlePassUtil = safeRequire(SharedUtilFolder and SharedUtilFolder:FindFirstChild("BattlePassUtil"))
+BoxController = safeRequire(ControllersFolder and ControllersFolder:FindFirstChild("BoxController"))
 
-local EggHuntData
+EggHuntData = nil
 pcall(function()
     EggHuntData = require(ReplicatedStorage.Shared.GameData.EggHuntData)
 end)
 
-local function icon(code)
+function icon(code)
     local ok, value = pcall(function()
         return utf8 and utf8.char(code)
     end)
     return ok and value or ""
 end
 
-local I = {
+I = {
     box = icon(0x1F4E6),
     gift = icon(0x1F381),
     party = icon(0x1F389),
@@ -146,7 +146,7 @@ local I = {
     package = icon(0x1F4E5),
 }
 
-local function notify(title, content, duration)
+function notify(title, content, duration)
     pcall(function()
         Rayfield:Notify({
             Title = tostring(title),
@@ -157,7 +157,7 @@ local function notify(title, content, duration)
     end)
 end
 
-local State = {
+State = {
     paused = false,
     overlayEnabled = true,
 
@@ -209,54 +209,54 @@ local State = {
     autoEventBooster = false,
 }
 
-local crateAmount = 1
-local autoRushWorld = 108
-local autoAttackDelay = 0.05
-local autoAttackPriority = "Nearest"
-local autoSellDelay = 5
-local merchantDelay = 1
-local autoCrateDelay = 1
-local crateBurstAmount = 1
-local crateOpenLimit = 0
-local crateStopAt = 0
+crateAmount = 1
+autoRushWorld = 108
+autoAttackDelay = 0.05
+autoAttackPriority = "Nearest"
+autoSellDelay = 5
+merchantDelay = 1
+autoCrateDelay = 1
+crateBurstAmount = 1
+crateOpenLimit = 0
+crateStopAt = 0
 
-local selectedDungeonWorld = "Auto"
-local selectedDungeonDifficulty = "Easy"
-local autoDungeonDelay = 2
-local lastDungeonAction = 0
-local lastDungeonAdvanceAt = 0
-local lastDungeonJoinAt = 0
-local dungeonNoBoxSince = nil
-local dungeonVisitedDoors = {}
-local dungeonRoomPerkTeam = 1
-local dungeonBossPerkTeam = 2
-local dungeonCurrentPerkTeamMode = nil
-local dungeonBossLocked = false
-local lastDungeonTeamSwapAt = 0
-local currentDungeonId = nil
-local dungeonLastAdvanceDirection = nil
-local dungeonLastTargetPos = nil
-local dungeonRoomLockUntil = 0
-local dungeonFirstTeleportAt = 0
-local lastGiantGiftPillarCleanupAt = 0
+selectedDungeonWorld = "Auto"
+selectedDungeonDifficulty = "Easy"
+autoDungeonDelay = 2
+lastDungeonAction = 0
+lastDungeonAdvanceAt = 0
+lastDungeonJoinAt = 0
+dungeonNoBoxSince = nil
+dungeonVisitedDoors = {}
+dungeonRoomPerkTeam = 1
+dungeonBossPerkTeam = 2
+dungeonCurrentPerkTeamMode = nil
+dungeonBossLocked = false
+lastDungeonTeamSwapAt = 0
+currentDungeonId = nil
+dungeonLastAdvanceDirection = nil
+dungeonLastTargetPos = nil
+dungeonRoomLockUntil = 0
+dungeonFirstTeleportAt = 0
+lastGiantGiftPillarCleanupAt = 0
 
-local webhookUrl = ""
-local webhookDelayMinutes = 60
-local lastWebhookAt = os.clock()
+webhookUrl = ""
+webhookDelayMinutes = 60
+lastWebhookAt = os.clock()
 
-local autoFavoriteRareDrops = true
-local autoFavoriteGoodPerks = true
-local perkFavoriteMinStat = 4.0
-local perkFavoriteMinTotalStat = 0
+autoFavoriteRareDrops = true
+autoFavoriteGoodPerks = true
+perkFavoriteMinStat = 4.0
+perkFavoriteMinTotalStat = 0
 
-local wheelDelay = 0.03
-local wheelBurst = 1
-local selectedWheelId = "Auto Detect"
-local lastWheelTick = 0
+wheelDelay = 0.03
+wheelBurst = 1
+selectedWheelId = "Auto Detect"
+lastWheelTick = 0
 
-local saveName = "Save1"
+saveName = "Save1"
 
-local autoCrates = {
+autoCrates = {
     Easter2024Crate = false,
     MaterialCrate = false,
     BasicPerkCrate = false,
@@ -265,68 +265,66 @@ local autoCrates = {
     DungeonCrateWorld1 = false,
 }
 
-local camConn
-local tpConn
-local areaConn
-local lockedCameraCenter
+camConn = nil
+tpConn = nil
+areaConn = nil
+lockedCameraCenter = nil
+routePoints = {}
+routeIndex = 1
+routeRadius = 80
+routeStep = 25
 
-local routePoints = {}
-local routeIndex = 1
-local routeRadius = 80
-local routeStep = 25
+autoFarmArea = false
+farmAreaIndex = 1
+farmAreaRadius = 90
+farmAreaStep = 28
+farmAreaCenter = nil
+farmAreaSize = nil
+farmPoints = {}
+farmPointIndex = 1
+farmAreaLastRescue = 0
+farmAreaLastRouteRefresh = 0
+farmAreaLastBoxCount = 0
 
-local autoFarmArea = false
-local farmAreaIndex = 1
-local farmAreaRadius = 90
-local farmAreaStep = 28
-local farmAreaCenter
-local farmAreaSize
-local farmPoints = {}
-local farmPointIndex = 1
-local farmAreaLastRescue = 0
-local farmAreaLastRouteRefresh = 0
-local farmAreaLastBoxCount = 0
+autoFarmIndexMaxArea = 0
+autoFarmIndexCheckDelay = 8
+lastAutoFarmIndexCheck = 0
+currentAutoFarmIndexArea = nil
 
-local autoFarmIndexMaxArea = 0
-local autoFarmIndexCheckDelay = 8
-local lastAutoFarmIndexCheck = 0
-local currentAutoFarmIndexArea = nil
+lastGoldRushAt = 0
+lastEasterRushAt = 0
+lastCloseAt = 0
+lastRewardAt = 0
+lastPerkAt = 0
+lastTreasureAt = 0
+lastChestAt = 0
+lastBoxesPerMinuteAt = os.clock()
+lastBoxesPerMinuteCount = 0
+boxesPerMinute = 0
+attacksThisSecond = 0
+attacksPerSecond = 0
+lastAttackSecondAt = os.clock()
+lastAttackAt = 0
+lastAttackHadTargetAt = 0
+lastAttackWarningAt = 0
+lastTeleportAt = 0
+safePosition = nil
+lastCoreTick = 0
+currentCoreState = "Ready"
+currentDungeonState = "Idle"
+currentIndexState = "Idle"
+currentMerchantState = "Idle"
+currentRushState = "Idle"
+skippedIndexAreas = {}
+customMerchantItems = {}
+currentWorldName = tostring(game.PlaceId)
+overlayGui = nil
+overlayLabel = nil
+LastError = {}
+RemoteStats = {}
+Cooldowns = {}
 
-local lastGoldRushAt = 0
-local lastEasterRushAt = 0
-local lastCloseAt = 0
-local lastRewardAt = 0
-local lastPerkAt = 0
-local lastTreasureAt = 0
-local lastChestAt = 0
-local lastBoxesPerMinuteAt = os.clock()
-local lastBoxesPerMinuteCount = 0
-local boxesPerMinute = 0
-local attacksThisSecond = 0
-local attacksPerSecond = 0
-local lastAttackSecondAt = os.clock()
-local lastAttackAt = 0
-local lastAttackHadTargetAt = 0
-local lastAttackWarningAt = 0
-local lastTeleportAt = 0
-local safePosition = nil
-local lastCoreTick = 0
-local currentCoreState = "Ready"
-local currentDungeonState = "Idle"
-local currentIndexState = "Idle"
-local currentMerchantState = "Idle"
-local currentRushState = "Idle"
-local skippedIndexAreas = {}
-local customMerchantItems = {}
-local currentWorldName = tostring(game.PlaceId)
-local overlayGui
-local overlayLabel
-
-local LastError = {}
-local RemoteStats = {}
-local Cooldowns = {}
-
-local Stats = {
+Stats = {
     startedAt = os.clock(),
     boxesBroken = 0,
     itemsSold = 0,
@@ -357,23 +355,23 @@ local Stats = {
     lastAreaName = "None",
 }
 
-local sellRarities = {
+sellRarities = {
     Hats = { Common = true, Rare = true, Epic = false, Legendary = false, Godly = false, Mythic = false, Etherium = false, Celestial = false },
     Pets = { Common = true, Rare = true, Epic = false, Legendary = false, Godly = false, Mythic = false, Etherium = false, Celestial = false },
     Perks = { Common = true, Rare = true, Epic = false, Legendary = false, Godly = false, Mythic = false },
 }
 
-local rarityAliases = {
+rarityAliases = {
     Mythical = "Mythic",
     Ethereal = "Etherium",
     Ethereum = "Etherium",
 }
 
-local blur = Instance.new("BlurEffect")
+blur = Instance.new("BlurEffect")
 blur.Size = 0
 blur.Parent = Lighting
 
-local function makeStubTab(label)
+function makeStubTab(label)
     local stub = {}
 
     local function noop()
@@ -392,7 +390,7 @@ local function makeStubTab(label)
     return stub
 end
 
-local function protectTab(tab, label)
+function protectTab(tab, label)
     if type(tab) ~= "table" then
         return makeStubTab(label)
     end
@@ -427,7 +425,7 @@ local function protectTab(tab, label)
     return tab
 end
 
-local windowOk, Window = pcall(function()
+windowOk, Window = pcall(function()
     return Rayfield:CreateWindow({
     Name = I.gift .. " Unboxing Hub V1",
     LoadingTitle = "Unboxing Hub",
@@ -451,7 +449,7 @@ if not windowOk or type(Window) ~= "table" then
     Window = {}
 end
 
-local function createTab(name)
+function createTab(name)
     if type(Window.CreateTab) ~= "function" then
         warn("UnboxingHub: Window.CreateTab nao encontrado.")
         return makeStubTab(name)
@@ -468,23 +466,23 @@ local function createTab(name)
     return protectTab(ok and tab or nil, name)
 end
 
-local DashboardTab = createTab(I.sparkles .. " Dashboard")
-local FarmTab = createTab(I.box .. " Farm")
-local EventTab = createTab(I.party .. " Event")
-local RewardsTab = createTab(I.gift .. " Rewards")
-local CratesTab = createTab(I.box .. " Crates")
-local AutoSellTab = createTab(I.sell .. " Auto Sell")
-local AutoAttackTab = createTab(I.sword .. " Auto Attack")
-local AreaFarmTab = createTab(I.map .. " Area Farm")
-local DungeonTab = createTab(I.map .. " Dungeon")
-local WheelTab = createTab(I.wheel .. " Wheel")
-local WebhookTab = createTab(I.link .. " Webhook")
-local StatsTab = createTab(I.chart .. " Stats")
-local DebugTab = createTab(I.bug .. " Debug")
-local VisualTab = createTab(I.eye .. " Visual")
-local OtherTab = createTab(I.gear .. " Other")
+DashboardTab = createTab(I.sparkles .. " Dashboard")
+FarmTab = createTab(I.box .. " Farm")
+EventTab = createTab(I.party .. " Event")
+RewardsTab = createTab(I.gift .. " Rewards")
+CratesTab = createTab(I.box .. " Crates")
+AutoSellTab = createTab(I.sell .. " Auto Sell")
+AutoAttackTab = createTab(I.sword .. " Auto Attack")
+AreaFarmTab = createTab(I.map .. " Area Farm")
+DungeonTab = createTab(I.map .. " Dungeon")
+WheelTab = createTab(I.wheel .. " Wheel")
+WebhookTab = createTab(I.link .. " Webhook")
+StatsTab = createTab(I.chart .. " Stats")
+DebugTab = createTab(I.bug .. " Debug")
+VisualTab = createTab(I.eye .. " Visual")
+OtherTab = createTab(I.gear .. " Other")
 
-local function formatTime(seconds)
+function formatTime(seconds)
     seconds = math.floor(seconds)
     local h = math.floor(seconds / 3600)
     local m = math.floor((seconds % 3600) / 60)
@@ -492,7 +490,7 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
-local function formatNumber(value)
+function formatNumber(value)
     local str = tostring(math.floor(tonumber(value) or 0))
     local result = str
 
@@ -505,7 +503,7 @@ local function formatNumber(value)
     return result
 end
 
-local function logError(systemName, err)
+function logError(systemName, err)
     local key = tostring(systemName or "Core")
     LastError[key] = {
         Message = tostring(err or "Unknown error"),
@@ -514,7 +512,7 @@ local function logError(systemName, err)
     currentCoreState = "ERROR: " .. key
 end
 
-local function safeRun(systemName, fn)
+function safeRun(systemName, fn)
     local ok, result = pcall(fn)
     if not ok then
         logError(systemName, result)
@@ -522,7 +520,7 @@ local function safeRun(systemName, fn)
     return ok, result
 end
 
-local function canUseCooldown(key, delay)
+function canUseCooldown(key, delay)
     local now = os.clock()
     local last = Cooldowns[key] or 0
     if now - last < delay then
@@ -534,7 +532,7 @@ local function canUseCooldown(key, delay)
     return true
 end
 
-local function recordRemote(name, ok, result)
+function recordRemote(name, ok, result)
     local info = RemoteStats[name] or {
         Calls = 0,
         Success = 0,
@@ -554,7 +552,7 @@ local function recordRemote(name, ok, result)
     RemoteStats[name] = info
 end
 
-local function safeFire(systemName, remote, remoteName, cooldown, a1, a2, a3, a4, a5, a6)
+function safeFire(systemName, remote, remoteName, cooldown, a1, a2, a3, a4, a5, a6)
     if not remote then
         logError(systemName, tostring(remoteName) .. " nao encontrado.")
         return false
@@ -571,7 +569,7 @@ local function safeFire(systemName, remote, remoteName, cooldown, a1, a2, a3, a4
     return ok, result
 end
 
-local function safeInvoke(systemName, remote, remoteName, cooldown, a1, a2, a3, a4, a5, a6)
+function safeInvoke(systemName, remote, remoteName, cooldown, a1, a2, a3, a4, a5, a6)
     if not remote then
         logError(systemName, tostring(remoteName) .. " nao encontrado.")
         return false
@@ -588,7 +586,7 @@ local function safeInvoke(systemName, remote, remoteName, cooldown, a1, a2, a3, 
     return ok, result
 end
 
-local function countDict(tbl)
+function countDict(tbl)
     local n = 0
     for _ in pairs(tbl or {}) do
         n = n + 1
@@ -596,24 +594,24 @@ local function countDict(tbl)
     return n
 end
 
-local function recordRush(name)
+function recordRush(name)
     Stats.rushesDone = Stats.rushesDone + 1
     Stats.rushesByName[name] = (Stats.rushesByName[name] or 0) + 1
 end
 
-local function recordMerchant(itemId)
+function recordMerchant(itemId)
     Stats.merchantBought = Stats.merchantBought + 1
     Stats.merchantByName[itemId] = (Stats.merchantByName[itemId] or 0) + 1
 end
 
-local function getCharacterParts()
+function getCharacterParts()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     return char, root, humanoid
 end
 
-local function stopCharacterWalk()
+function stopCharacterWalk()
     local _, root, humanoid = getCharacterParts()
 
     if humanoid then
@@ -624,7 +622,7 @@ local function stopCharacterWalk()
     end
 end
 
-local function resetCamera()
+function resetCamera()
     local camera = workspace.CurrentCamera
 
     if camConn then camConn:Disconnect() camConn = nil end
@@ -632,7 +630,7 @@ local function resetCamera()
     State.camLock = false
 end
 
-local function stopMovementControllers()
+function stopMovementControllers()
     autoFarmArea = false
     State.tpCamera = false
 
@@ -644,7 +642,7 @@ local function stopMovementControllers()
     stopCharacterWalk()
 end
 
-local function stopAllSystems(keepConfig)
+function stopAllSystems(keepConfig)
     State.paused = false
     State.autoGoldRush = false
     State.autoEasterRush = false
@@ -697,7 +695,7 @@ local function stopAllSystems(keepConfig)
     currentCoreState = "Stopped"
 end
 
-local function softStop()
+function softStop()
     State.paused = not State.paused
 
     if State.paused then
@@ -708,7 +706,7 @@ local function softStop()
     end
 end
 
-local function panicMode()
+function panicMode()
     local _, root = getCharacterParts()
     if root then
         safePosition = safePosition or root.Position
@@ -723,7 +721,7 @@ local function panicMode()
     currentCoreState = "Panic"
 end
 
-local function setSafePosition()
+function setSafePosition()
     local _, root = getCharacterParts()
     if root then
         safePosition = root.Position
@@ -731,13 +729,12 @@ local function setSafePosition()
     end
 end
 
-local getAreaIndexFromModel
-local getAreaIndexInfo
-local refreshFarmRoute
-local sendWebhook
-local buildPrettyWebhook
-
-local function getWorldName()
+getAreaIndexFromModel = nil
+getAreaIndexInfo = nil
+refreshFarmRoute = nil
+sendWebhook = nil
+buildPrettyWebhook = nil
+function getWorldName()
     local name = tostring(game.PlaceId)
 
     pcall(function()
@@ -752,7 +749,7 @@ local function getWorldName()
     return name
 end
 
-local function getLoadedAreaList()
+function getLoadedAreaList()
     local result = {}
     local areas = workspace:FindFirstChild("Areas")
     if not areas then return result end
@@ -774,7 +771,7 @@ local function getLoadedAreaList()
     return result
 end
 
-local function getLoadedAreasText(limit)
+function getLoadedAreasText(limit)
     local lines = {}
     local maxItems = limit or 12
 
@@ -791,7 +788,7 @@ local function getLoadedAreasText(limit)
     return table.concat(lines, "\n")
 end
 
-local function getLoadedAreaOptions()
+function getLoadedAreaOptions()
     local options = {}
     for _, info in ipairs(getLoadedAreaList()) do
         local indexText = tostring(info.Index ~= 999999 and info.Index or "?")
@@ -805,16 +802,16 @@ local function getLoadedAreaOptions()
     return options
 end
 
-local function parseAreaOption(option)
+function parseAreaOption(option)
     local n = tostring(option or ""):match("^(%d+)")
     return n and tonumber(n) or nil
 end
 
-local function healthValue(name, value)
+function healthValue(name, value)
     return (value and I.check or I.warn) .. " " .. name
 end
 
-local function getHealthText()
+function getHealthText()
     local lines = {
         healthValue("RE", RE ~= nil),
         healthValue("RF", RF ~= nil),
@@ -829,11 +826,11 @@ local function getHealthText()
     return table.concat(lines, "\n")
 end
 
-local function remoteExists(folder, name)
+function remoteExists(folder, name)
     return folder and folder:FindFirstChild(name) ~= nil
 end
 
-local function getRemoteCheckText()
+function getRemoteCheckText()
     local checks = {
         { RE, "AttackBox" },
         { RE, "StartBoxRush" },
@@ -858,7 +855,7 @@ local function getRemoteCheckText()
     return table.concat(lines, "\n")
 end
 
-local function getLastErrorText()
+function getLastErrorText()
     local newestName
     local newest
 
@@ -873,7 +870,7 @@ local function getLastErrorText()
     return tostring(newestName) .. ": " .. tostring(newest.Message)
 end
 
-local function getRemoteStatsText(limit)
+function getRemoteStatsText(limit)
     local items = {}
     for name, info in pairs(RemoteStats) do
         table.insert(items, {
@@ -897,14 +894,14 @@ local function getRemoteStatsText(limit)
     return table.concat(lines, "\n")
 end
 
-local function parseSkippedAreas(text)
+function parseSkippedAreas(text)
     skippedIndexAreas = {}
     for num in tostring(text or ""):gmatch("%d+") do
         skippedIndexAreas[tonumber(num)] = true
     end
 end
 
-local function getIndexMissingText(index, limit)
+function getIndexMissingText(index, limit)
     local info = getAreaIndexInfo and getAreaIndexInfo(index) or nil
     if not info then return "Index nao encontrado." end
     if info.Missing <= 0 then return "Area completa." end
@@ -921,7 +918,7 @@ local function getIndexMissingText(index, limit)
     return table.concat(lines, "\n")
 end
 
-local function recenterFarmRoute()
+function recenterFarmRoute()
     local _, root = getCharacterParts()
     if not root then return end
 
@@ -931,7 +928,7 @@ local function recenterFarmRoute()
     notify(I.target .. " Route", "Rota recentralizada na posicao atual.", 2)
 end
 
-local function updateBoxesPerMinute()
+function updateBoxesPerMinute()
     local now = os.clock()
     if now - lastBoxesPerMinuteAt >= 10 then
         local diff = Stats.boxesBroken - lastBoxesPerMinuteCount
@@ -947,7 +944,7 @@ local function updateBoxesPerMinute()
     end
 end
 
-local function ensureOverlay()
+function ensureOverlay()
     if overlayGui or not State.overlayEnabled then return end
 
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -976,7 +973,7 @@ local function ensureOverlay()
     overlayLabel.Parent = overlayGui
 end
 
-local function updateOverlay()
+function updateOverlay()
     if not State.overlayEnabled then
         if overlayGui then overlayGui:Destroy() overlayGui = nil overlayLabel = nil end
         return
@@ -996,7 +993,7 @@ local function updateOverlay()
         .. I.warn .. " Last Error: " .. getLastErrorText()
 end
 
-local function hasAnyAutomation()
+function hasAnyAutomation()
     if State.autoGoldRush or State.autoEasterRush or State.autoClaim or State.autoBP or State.autoDaily or State.autoAch then return true end
     if State.autoPerk or State.autoAttackBoxes or State.autoWheel or State.autoDungeon or State.autoFarmIndex then return true end
     if State.autoCollectTreasure or State.autoClaimChest or State.autoSellHats or State.autoSellPets or State.autoSellPerks then return true end
@@ -1007,7 +1004,7 @@ local function hasAnyAutomation()
 end
 
 
-local function getItemData(invItem)
+function getItemData(invItem)
     if not ItemData or not invItem or not invItem.ItemId then return nil end
     local ok, data = pcall(function()
         return ItemData.Get(invItem.ItemId)
@@ -1015,7 +1012,7 @@ local function getItemData(invItem)
     return ok and data or nil
 end
 
-local function getRarityName(itemData)
+function getRarityName(itemData)
     if not ItemData or not itemData or not itemData.Rarity then return nil end
     local ok, name = pcall(function()
         return ItemData.GetRawRarityName(itemData.Rarity)
@@ -1024,7 +1021,7 @@ local function getRarityName(itemData)
     return nil
 end
 
-local function getBestPerkStat(invItem)
+function getBestPerkStat(invItem)
     if not invItem then return 0 end
 
     local boosts = invItem.boosts or invItem.Boosts or invItem.stats or invItem.Stats
@@ -1056,7 +1053,7 @@ local function getBestPerkStat(invItem)
     return best
 end
 
-local function getPerkStatSum(invItem)
+function getPerkStatSum(invItem)
     local total = 0
 
     local function scan(v)
@@ -1081,13 +1078,13 @@ local function getPerkStatSum(invItem)
     return total
 end
 
-local function isRareDrop(invItem)
+function isRareDrop(invItem)
     if not invItem then return false end
     local txt = string.lower(tostring(invItem.ItemId or invItem.Id or invItem.Name or ""))
     return txt:find("eggrain") or txt:find("egg rain") or txt:find("bombrain") or txt:find("bomb rain") or txt:find("bomb%-rain")
 end
 
-local function favoriteOrLockItem(category, uid)
+function favoriteOrLockItem(category, uid)
     pcall(function()
         if RE:FindFirstChild("Favorite") then
             RE.Favorite:FireServer(uid, category)
@@ -1105,7 +1102,7 @@ local function favoriteOrLockItem(category, uid)
     end)
 end
 
-local function shouldSellItem(invItem, category)
+function shouldSellItem(invItem, category)
     if not invItem then return false end
     if invItem.IsEquipped or invItem.IsFavorite or invItem.Locked then return false end
 
@@ -1114,7 +1111,7 @@ local function shouldSellItem(invItem, category)
     return rarity and sellRarities[category] and sellRarities[category][rarity] == true
 end
 
-local function protectSpecialItems()
+function protectSpecialItems()
     if not PlayerData or not PlayerData.data then return end
 
     for _, category in ipairs({ "Hats", "Pets", "Perks" }) do
@@ -1145,7 +1142,7 @@ local function protectSpecialItems()
     end
 end
 
-local function getAutoSellPreview(category)
+function getAutoSellPreview(category)
     if not PlayerData or not PlayerData.data then return 0 end
     local storage = PlayerData.data[category]
     if not storage then return 0 end
@@ -1167,7 +1164,7 @@ local function getAutoSellPreview(category)
     return total
 end
 
-local function sellInventoryCategory(category)
+function sellInventoryCategory(category)
     if not PlayerData or not PlayerData.data then return end
 
     local storage = PlayerData.data[category]
@@ -1227,7 +1224,7 @@ local function sellInventoryCategory(category)
     end
 end
 
-local function getBoxScore(box, rootPos)
+function getBoxScore(box, rootPos)
     local pos = box and box.CFrame and box.CFrame.Position
     if not pos then return math.huge end
 
@@ -1262,7 +1259,7 @@ local function getBoxScore(box, rootPos)
     return distance
 end
 
-local function getNearestBox()
+function getNearestBox()
     if not BoxController then return nil end
 
     local char = player.Character
@@ -1291,7 +1288,7 @@ local function getNearestBox()
     return nearest
 end
 
-local function buildRoutePoints(center, radius, step)
+function buildRoutePoints(center, radius, step)
     local points = {}
 
     for x = -radius, radius, step do
@@ -1315,7 +1312,7 @@ local function buildRoutePoints(center, radius, step)
     return points
 end
 
-local function startTPCameraRoute()
+function startTPCameraRoute()
     if tpConn then tpConn:Disconnect() tpConn = nil end
 
     local char = player.Character or player.CharacterAdded:Wait()
@@ -1347,11 +1344,11 @@ local function startTPCameraRoute()
     end)
 end
 
-local function stopTPCameraRoute()
+function stopTPCameraRoute()
     if tpConn then tpConn:Disconnect() tpConn = nil end
 end
 
-local function getAreaData(index)
+function getAreaData(index)
     if not AreaData or not AreaData.Get then return nil end
     local ok, data = pcall(function()
         return AreaData.Get(index)
@@ -1359,7 +1356,7 @@ local function getAreaData(index)
     return ok and data or nil
 end
 
-local function getAreaIndexFromName(name)
+function getAreaIndexFromName(name)
     local n = tostring(name or ""):match("^(%d+)_")
     if not n then n = tostring(name or ""):match("^(%d+)") end
     return n and tonumber(n) or nil
@@ -1374,7 +1371,7 @@ function getAreaIndexFromModel(area)
     return getAreaIndexFromName(area.Name)
 end
 
-local function getAreaModel(index)
+function getAreaModel(index)
     local areas = workspace:FindFirstChild("Areas")
     if not areas then return nil end
 
@@ -1397,7 +1394,7 @@ local function getAreaModel(index)
     return areas:FindFirstChild(tostring(index))
 end
 
-local function isAreaLoadedInCurrentWorld(index)
+function isAreaLoadedInCurrentWorld(index)
     local areas = workspace:FindFirstChild("Areas")
     local wanted = tonumber(index)
     if not areas or not wanted then return false end
@@ -1421,7 +1418,7 @@ local function isAreaLoadedInCurrentWorld(index)
     return getAreaModel(wanted) ~= nil
 end
 
-local function getInstancePathText(inst, limit)
+function getInstancePathText(inst, limit)
     local names = {}
     local current = inst
 
@@ -1433,7 +1430,7 @@ local function getInstancePathText(inst, limit)
     return table.concat(names, " "):lower()
 end
 
-local function partLooksLikeEggArea(part)
+function partLooksLikeEggArea(part)
     local text = getInstancePathText(part)
     return text:find("egg", 1, true)
         or text:find("capsule", 1, true)
@@ -1441,7 +1438,7 @@ local function partLooksLikeEggArea(part)
         or text:find("pet", 1, true)
 end
 
-local function partLooksLikeBoxField(part)
+function partLooksLikeBoxField(part)
     if not part or not part:IsA("BasePart") or partLooksLikeEggArea(part) then return false end
 
     local text = getInstancePathText(part)
@@ -1462,7 +1459,7 @@ local function partLooksLikeBoxField(part)
         ))
 end
 
-local function partLooksUsefulForFarm(part)
+function partLooksUsefulForFarm(part)
     if not part or not part:IsA("BasePart") then return false end
     if partLooksLikeEggArea(part) then return false end
     if partLooksLikeBoxField(part) then return true end
@@ -1480,7 +1477,7 @@ local function partLooksUsefulForFarm(part)
         or p:find("ground", 1, true)
 end
 
-local function boundsFromParts(parts)
+function boundsFromParts(parts)
     local minX, minY, minZ
     local maxX, maxY, maxZ
 
@@ -1507,12 +1504,12 @@ local function boundsFromParts(parts)
     return center, size
 end
 
-local function centerFromParts(parts)
+function centerFromParts(parts)
     local center = boundsFromParts(parts)
     return center
 end
 
-local function getAreaBoxFieldInfo(area)
+function getAreaBoxFieldInfo(area)
     if not area then return nil, nil end
 
     local areaIndex = getAreaIndexFromModel(area)
@@ -1554,7 +1551,7 @@ local function getAreaBoxFieldInfo(area)
     return boundsFromParts(fieldParts)
 end
 
-local function getModelCenter(model)
+function getModelCenter(model)
     if not model then return nil end
 
     if model:IsA("BasePart") then return model.Position end
@@ -1625,7 +1622,7 @@ function refreshFarmRoute()
     farmAreaLastBoxCount = Stats.boxesBroken
 end
 
-local function startFarmAreaRoute()
+function startFarmAreaRoute()
     if areaConn then areaConn:Disconnect() areaConn = nil end
 
     local area = getAreaModel(farmAreaIndex)
@@ -1693,7 +1690,7 @@ local function startFarmAreaRoute()
     notify(I.map .. " Area Farm", "Farmando area " .. tostring(farmAreaIndex) .. " - " .. label, 3)
 end
 
-local function stopFarmAreaRoute()
+function stopFarmAreaRoute()
     if areaConn then areaConn:Disconnect() areaConn = nil end
     farmPoints = {}
     farmPointIndex = 1
@@ -1701,7 +1698,7 @@ local function stopFarmAreaRoute()
     stopCharacterWalk()
 end
 
-local function getReleasedAreaCount()
+function getReleasedAreaCount()
     if AreaData and AreaData.ReleasedAreaCount then
         local ok, count = pcall(function()
             return AreaData.ReleasedAreaCount()
@@ -1716,14 +1713,14 @@ local function getReleasedAreaCount()
     return 0
 end
 
-local function getUnlockedAreaCount()
+function getUnlockedAreaCount()
     local data = PlayerData and PlayerData.data
     local unlocked = data and tonumber(data.AreasUnlocked)
     if unlocked and unlocked > 0 then return unlocked end
     return getReleasedAreaCount()
 end
 
-local function isDiscoveredItem(item)
+function isDiscoveredItem(item)
     local data = PlayerData and PlayerData.data
     local tasks = data and data.GlobalTasks
     if not tasks or not item then return false end
@@ -1732,7 +1729,7 @@ local function isDiscoveredItem(item)
     return discoveryId and (tasks[discoveryId] or 0) > 0
 end
 
-local function isHatIndexItem(item)
+function isHatIndexItem(item)
     if not item or not item.Id then return false end
     if item.Type == "Hat" then return true end
 
@@ -1778,7 +1775,7 @@ function getAreaIndexInfo(index)
     }
 end
 
-local function findNextIncompleteIndexArea()
+function findNextIncompleteIndexArea()
     local maxArea = tonumber(autoFarmIndexMaxArea) or 0
     if maxArea <= 0 then maxArea = getUnlockedAreaCount() end
 
@@ -1797,7 +1794,7 @@ local function findNextIncompleteIndexArea()
     return nil
 end
 
-local function startAutoIndexTarget(info)
+function startAutoIndexTarget(info)
     if not info then return end
 
     local changedArea = currentAutoFarmIndexArea ~= info.Index
@@ -1829,7 +1826,7 @@ local function startAutoIndexTarget(info)
     end
 end
 
-local function checkAutoFarmIndex()
+function checkAutoFarmIndex()
     if not AreaData then
         notify(I.warn .. " Auto Index", "AreaData nao encontrado.", 4)
         return
@@ -1869,7 +1866,7 @@ local function checkAutoFarmIndex()
     end
 end
 
-local function getEquippedPerkIds()
+function getEquippedPerkIds()
     local ids = {}
     if not PlayerData or not PlayerData.data then return ids end
 
@@ -1898,7 +1895,7 @@ local function getEquippedPerkIds()
     return ids
 end
 
-local function forceActivateEquippedPerks()
+function forceActivateEquippedPerks()
     for _, id in ipairs(getEquippedPerkIds()) do
         pcall(function()
             RE.ActivatePerk:FireServer(id)
@@ -1907,7 +1904,7 @@ local function forceActivateEquippedPerks()
     end
 end
 
-local function trackCrateReward(value)
+function trackCrateReward(value)
     if type(value) == "string" then
         local s = string.lower(value)
         if s:find("eggrain") or s:find("egg rain") then Stats.eggRainGained = Stats.eggRainGained + 1 end
@@ -1925,7 +1922,7 @@ local function trackCrateReward(value)
     end
 end
 
-local function openCrateAndTrack(crateId, amount)
+function openCrateAndTrack(crateId, amount)
     amount = tonumber(amount) or 1
 
     local ok, result = safeInvoke("Crates", RF:FindFirstChild("OpenCrate"), "OpenCrate", 0.15, crateId, amount)
@@ -1939,7 +1936,7 @@ local function openCrateAndTrack(crateId, amount)
     end
 end
 
-local function merchantItemVisible(itemId)
+function merchantItemVisible(itemId)
     if not State.merchantSmartMode then return true end
 
     local target = string.lower(tostring(itemId or ""))
@@ -1958,14 +1955,14 @@ local function merchantItemVisible(itemId)
     return false
 end
 
-local function parseCustomMerchantItems(text)
+function parseCustomMerchantItems(text)
     customMerchantItems = {}
     for item in tostring(text or ""):gmatch("[^,%s]+") do
         if item ~= "" then table.insert(customMerchantItems, item) end
     end
 end
 
-local function buyMerchant(itemId)
+function buyMerchant(itemId)
     if not merchantItemVisible(itemId) then
         currentMerchantState = "Waiting " .. tostring(itemId)
         return
@@ -1983,7 +1980,7 @@ local function buyMerchant(itemId)
     end
 end
 
-local function getNearestWheelId()
+function getNearestWheelId()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local nearestId
@@ -2012,7 +2009,7 @@ local function getNearestWheelId()
     return nearestId
 end
 
-local function spinSelectedWheel()
+function spinSelectedWheel()
     local wheelId = selectedWheelId
     if wheelId == "Auto Detect" then wheelId = getNearestWheelId() end
     if not wheelId then return end
@@ -2022,12 +2019,12 @@ local function spinSelectedWheel()
     end)
 end
 
-local function claimDamageQuest()
+function claimDamageQuest()
     local ok = safeFire("Rewards", RE:FindFirstChild("CollectQuest"), "CollectQuest", 0.5, "Damage")
     if ok then Stats.questsClaimed = Stats.questsClaimed + 1 end
 end
 
-local function getBattlePassStage(battlePass)
+function getBattlePassStage(battlePass)
     local experience = battlePass and battlePass.Experience or 0
 
     if BattlePassUtil and BattlePassUtil.GetBattlePassStage then
@@ -2043,7 +2040,7 @@ local function getBattlePassStage(battlePass)
     return math.min(math.floor(experience / stageXp), maxStage)
 end
 
-local function claimAllBoxPassRewards(silent)
+function claimAllBoxPassRewards(silent)
     local data = PlayerData and PlayerData.data
     local battlePass = data and data.BattlePass
     local remote = RF:FindFirstChild("ClaimBattlePass")
@@ -2086,7 +2083,7 @@ local function claimAllBoxPassRewards(silent)
     end
 end
 
-local function collectAllEggHuntEggs()
+function collectAllEggHuntEggs()
     local char = player.Character or player.CharacterAdded:Wait()
     local root = char:FindFirstChild("HumanoidRootPart")
     local tried = {}
@@ -2136,7 +2133,7 @@ local function collectAllEggHuntEggs()
     notify(I.egg .. " EggHunt", "Tentou coletar " .. tostring(collected) .. " ovos.", 4)
 end
 
-local function claimEggHuntMilestones()
+function claimEggHuntMilestones()
     local count = 30
     if EggHuntData and EggHuntData.Milestones then
         count = #EggHuntData.Milestones
@@ -2150,7 +2147,7 @@ local function claimEggHuntMilestones()
     end
 end
 
-local function getTaggedPosition(inst)
+function getTaggedPosition(inst)
     if not inst then return nil end
 
     if inst:IsA("BasePart") then
@@ -2168,14 +2165,14 @@ local function getTaggedPosition(inst)
     return part and part.Position or nil
 end
 
-local function isTreasureCollected(uniqueId)
+function isTreasureCollected(uniqueId)
     local data = PlayerData and PlayerData.data
     local tasks = data and data.GlobalTasks
     if not tasks or not uniqueId then return false end
     return (tasks["Treasure" .. tostring(uniqueId)] or 0) > 0
 end
 
-local function collectAllTreasures()
+function collectAllTreasures()
     if not RE:FindFirstChild("CollectTreasure") then
         notify(I.warn .. " Treasure", "Remote CollectTreasure nao encontrado.", 3)
         return
@@ -2207,7 +2204,7 @@ local function collectAllTreasures()
     notify(I.gift .. " Treasure", "Tentou coletar " .. tostring(collected) .. " tesouros.", 3)
 end
 
-local function getChestRewardKeys(chestModel)
+function getChestRewardKeys(chestModel)
     local keys = {}
     local function add(value)
         value = tostring(value or "")
@@ -2238,7 +2235,7 @@ local function getChestRewardKeys(chestModel)
     return keys
 end
 
-local function isChestAvailable(chestModel)
+function isChestAvailable(chestModel)
     local data = PlayerData and PlayerData.data
     local timed = data and data.TimedRewards
     if not timed then return true end
@@ -2254,7 +2251,7 @@ local function isChestAvailable(chestModel)
     return false
 end
 
-local function collectAllChests(silent)
+function collectAllChests(silent)
     local remote = RF:FindFirstChild("ClaimTimedReward")
     if not remote then
         if not silent then notify(I.warn .. " Chests", "Remote ClaimTimedReward nao encontrado.", 3) end
@@ -2302,7 +2299,7 @@ local function collectAllChests(silent)
     end
 end
 
-local function getDungeonQueueZone()
+function getDungeonQueueZone()
     local tagged = CollectionService:GetTagged("DungeonQueue")
 
     for _, zone in ipairs(tagged) do
@@ -2341,7 +2338,7 @@ local function getDungeonQueueZone()
     return nil
 end
 
-local function joinDungeonQueue()
+function joinDungeonQueue()
     local zone = getDungeonQueueZone()
     if not zone then
         notify(I.warn .. " Auto Dungeon", "Zona da dungeon nao encontrada.", 3)
@@ -2359,7 +2356,7 @@ local function joinDungeonQueue()
     end)
 end
 
-local function skipDungeonQueue()
+function skipDungeonQueue()
     local zone = getDungeonQueueZone()
     if not zone then return end
 
@@ -2368,7 +2365,7 @@ local function skipDungeonQueue()
     end)
 end
 
-local function claimDungeonResults()
+function claimDungeonResults()
     pcall(function()
         if StateUtil and StateUtil.ClosePage then
             StateUtil.ClosePage("DungeonResult")
@@ -2382,7 +2379,7 @@ local function claimDungeonResults()
     end)
 end
 
-local function equipPerkTeam(teamIndex, mode, silent)
+function equipPerkTeam(teamIndex, mode, silent)
     teamIndex = tonumber(teamIndex)
     if not teamIndex or teamIndex < 1 then return false end
     teamIndex = math.floor(teamIndex)
@@ -2407,7 +2404,7 @@ local function equipPerkTeam(teamIndex, mode, silent)
     return ok
 end
 
-local function isBossDungeonBox(box)
+function isBossDungeonBox(box)
     if not box then return false end
 
     local texts = {}
@@ -2427,7 +2424,7 @@ local function isBossDungeonBox(box)
     return text:find("boss", 1, true) ~= nil or text:find("colossal", 1, true) ~= nil
 end
 
-local function updateDungeonPerkTeam(forceRooms)
+function updateDungeonPerkTeam(forceRooms)
     if not State.autoDungeonTeamSwap then return end
     if not forceRooms and os.clock() - lastDungeonTeamSwapAt < 1.25 then return end
 
@@ -2449,7 +2446,7 @@ local function updateDungeonPerkTeam(forceRooms)
     end
 end
 
-local function getCurrentDungeonRoot()
+function getCurrentDungeonRoot()
     local dungeonId = player:GetAttribute("DungeonId")
     if not dungeonId then return nil end
 
@@ -2460,7 +2457,7 @@ local function getCurrentDungeonRoot()
     return nil
 end
 
-local function getInstanceCFrame(inst)
+function getInstanceCFrame(inst)
     if inst:IsA("BasePart") then
         return inst.CFrame
     elseif inst:IsA("Model") then
@@ -2471,7 +2468,7 @@ local function getInstanceCFrame(inst)
     end
 end
 
-local function isInCurrentDungeon(inst)
+function isInCurrentDungeon(inst)
     local dungeonId = player:GetAttribute("DungeonId")
     if not dungeonId then return true end
 
@@ -2491,12 +2488,12 @@ local function isInCurrentDungeon(inst)
     return true
 end
 
-local function textHasGiantGift(value)
+function textHasGiantGift(value)
     local text = string.lower(tostring(value or ""))
     return text:find("giant", 1, true) ~= nil and text:find("gift", 1, true) ~= nil
 end
 
-local function isGiantGiftNearby(root, dungeonRoot)
+function isGiantGiftNearby(root, dungeonRoot)
     local box = getNearestBox()
     if box then
         local found = false
@@ -2520,7 +2517,7 @@ local function isGiantGiftNearby(root, dungeonRoot)
     return false
 end
 
-local function disableGiantGiftPillars()
+function disableGiantGiftPillars()
     if not State.noGiantGiftPillars then return end
     if os.clock() - lastGiantGiftPillarCleanupAt < 2 then return end
     lastGiantGiftPillarCleanupAt = os.clock()
@@ -2553,11 +2550,11 @@ local function disableGiantGiftPillars()
     end
 end
 
-local function canDungeonTeleport()
+function canDungeonTeleport()
     return dungeonFirstTeleportAt == 0 or os.clock() >= dungeonFirstTeleportAt
 end
 
-local function dungeonMoveAssist()
+function dungeonMoveAssist()
     disableGiantGiftPillars()
 
     local box = getNearestBox()
@@ -2680,12 +2677,12 @@ local function dungeonMoveAssist()
     end
 end
 
-local function hasOpenPage()
+function hasOpenPage()
     if not StateUtil or not StateUtil.ClosePage then return false end
     return true
 end
 
-local function getWebhookTimestamp()
+function getWebhookTimestamp()
     local ok, stamp = pcall(function()
         return os.date("!%Y-%m-%dT%H:%M:%SZ")
     end)
@@ -2693,7 +2690,7 @@ local function getWebhookTimestamp()
     return ok and stamp or nil
 end
 
-local function formatWebhookDict(tbl, emptyText, limit)
+function formatWebhookDict(tbl, emptyText, limit)
     local items = {}
 
     for name, count in pairs(tbl or {}) do
@@ -2746,9 +2743,6 @@ function buildPrettyWebhook(title, description, color, fields)
                 description = tostring(description),
                 color = color or 0xF5B342,
                 timestamp = getWebhookTimestamp(),
-                footer = {
-                    text = "Unboxing Hub • " .. tostring(player.Name),
-                },
                 fields = fields or {},
                 footer = {
                     text = "Unboxing Hub - " .. tostring(player.Name),
@@ -2791,7 +2785,7 @@ function sendWebhook(message, force)
     end)
 end
 
-local function buildWebhookReport()
+function buildWebhookReport()
     local indexText = "Sem alvo no momento."
     if Stats.indexTargetArea and Stats.indexTargetArea > 0 then
         indexText = "Area **" .. tostring(Stats.indexTargetArea) .. "** | faltam **" .. formatNumber(Stats.indexMissingHats) .. "** hats"
@@ -2851,7 +2845,7 @@ local function buildWebhookReport()
     )
 end
 
-local function buildWebhookTest()
+function buildWebhookTest()
     return buildPrettyWebhook(
         I.bolt .. " Teste do Webhook",
         I.check .. " Se voce recebeu isso, o webhook esta funcionando perfeitamente.",
@@ -2876,7 +2870,7 @@ local function buildWebhookTest()
     )
 end
 
-local function buildWebhookKick(message)
+function buildWebhookKick(message)
     local cleanMessage = tostring(message or "Sem mensagem capturada."):gsub("`", "'"):sub(1, 900)
 
     return buildPrettyWebhook(
@@ -2903,7 +2897,7 @@ local function buildWebhookKick(message)
     )
 end
 
-local function saveConfig()
+function saveConfig()
     if not writefile or not makefolder or not isfolder then
         notify(I.warn .. " Save", "Executor sem writefile/makefolder.", 4)
         return
@@ -2951,7 +2945,7 @@ local function saveConfig()
     notify(I.save .. " Save", "Salvou: " .. saveName, 3)
 end
 
-local function loadConfig()
+function loadConfig()
     if not readfile or not isfile then
         notify(I.warn .. " Save", "Executor sem readfile/isfile.", 4)
         return
@@ -3202,7 +3196,7 @@ CratesTab:CreateInput({ Name = I.bolt .. " Open Burst Amount", PlaceholderText =
 CratesTab:CreateInput({ Name = I.stop .. " Parar apos X aberturas", PlaceholderText = "0 = infinito", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0 then crateOpenLimit = math.floor(n) end end })
 CratesTab:CreateInput({ Name = I.clock .. " Parar apos minutos", PlaceholderText = "0 = sem limite", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n > 0 then crateStopAt = os.clock() + n * 60 else crateStopAt = 0 end end })
 
-local function crateToggle(name, crateId)
+function crateToggle(name, crateId)
     CratesTab:CreateToggle({
         Name = name,
         CurrentValue = autoCrates[crateId] == true,
@@ -3258,7 +3252,7 @@ AutoSellTab:CreateInput({ Name = I.chart .. " Soma minima dos Stats", Placeholde
 AutoSellTab:CreateInput({ Name = I.clock .. " Delay Auto Sell", PlaceholderText = "Padrao: 5", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then autoSellDelay = n end end })
 AutoSellTab:CreateToggle({ Name = I.shield .. " Manter 1 por raridade", CurrentValue = true, Flag = "KeepOnePerRarity", Callback = function(v) State.keepOnePerRarity = v end })
 
-local function rarityToggles(category, rarities, label)
+function rarityToggles(category, rarities, label)
     AutoSellTab:CreateSection(label)
     AutoSellTab:CreateToggle({
         Name = I.sell .. " Ativar Auto Sell " .. category,
@@ -3748,3 +3742,4 @@ task.spawn(function()
 end)
 
 notify(I.gift .. " Unboxing Hub", "GUI carregado com Auto Dungeon.", 4)
+
