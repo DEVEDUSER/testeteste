@@ -221,6 +221,7 @@ local farmAreaIndex = 1
 local farmAreaRadius = 90
 local farmAreaStep = 28
 local farmAreaCenter
+local farmAreaSize
 local farmPoints = {}
 local farmPointIndex = 1
 local farmAreaLastRescue = 0
@@ -622,51 +623,146 @@ local function getAreaModel(index)
     return areas:FindFirstChild(tostring(index))
 end
 
+local function getInstancePathText(inst, limit)
+    local names = {}
+    local current = inst
+
+    while current and current ~= workspace and #names < (limit or 6) do
+        table.insert(names, tostring(current.Name or ""))
+        current = current.Parent
+    end
+
+    return table.concat(names, " "):lower()
+end
+
+local function partLooksLikeEggArea(part)
+    local text = getInstancePathText(part)
+    return text:find("egg", 1, true)
+        or text:find("capsule", 1, true)
+        or text:find("hatch", 1, true)
+        or text:find("pet", 1, true)
+end
+
+local function partLooksLikeBoxField(part)
+    if not part or not part:IsA("BasePart") or partLooksLikeEggArea(part) then return false end
+
+    local text = getInstancePathText(part)
+    local name = part.Name:lower()
+
+    return text:find("boxfield", 1, true)
+        or text:find("box field", 1, true)
+        or text:find("boxzone", 1, true)
+        or text:find("box zone", 1, true)
+        or text:find("attackzone", 1, true)
+        or text:find("attack zone", 1, true)
+        or name == "field"
+        or (text:find("box", 1, true) and (
+            text:find("field", 1, true)
+            or text:find("zone", 1, true)
+            or text:find("spawn", 1, true)
+            or text:find("hitbox", 1, true)
+        ))
+end
+
 local function partLooksUsefulForFarm(part)
     if not part or not part:IsA("BasePart") then return false end
+    if partLooksLikeEggArea(part) then return false end
+    if partLooksLikeBoxField(part) then return true end
 
     local n = part.Name:lower()
     local p = part.Parent and part.Parent.Name:lower() or ""
 
     return n:find("hitbox", 1, true)
         or n:find("field", 1, true)
-        or n:find("zone", 1, true)
         or n:find("floor", 1, true)
         or n:find("ground", 1, true)
-        or n:find("spawn", 1, true)
-        or n:find("path", 1, true)
         or p:find("hitbox", 1, true)
         or p:find("field", 1, true)
-        or p:find("zone", 1, true)
         or p:find("floor", 1, true)
         or p:find("ground", 1, true)
-        or p:find("spawn", 1, true)
-        or p:find("path", 1, true)
 end
 
-local function centerFromParts(parts)
+local function boundsFromParts(parts)
     local minX, minY, minZ
     local maxX, maxY, maxZ
 
     for _, part in ipairs(parts) do
         local p = part.Position
-        minX = minX and math.min(minX, p.X) or p.X
-        minY = minY and math.min(minY, p.Y) or p.Y
-        minZ = minZ and math.min(minZ, p.Z) or p.Z
-        maxX = maxX and math.max(maxX, p.X) or p.X
-        maxY = maxY and math.max(maxY, p.Y) or p.Y
-        maxZ = maxZ and math.max(maxZ, p.Z) or p.Z
+        local s = part.Size or Vector3.new(0, 0, 0)
+        local half = s / 2
+
+        local x1, y1, z1 = p.X - half.X, p.Y - half.Y, p.Z - half.Z
+        local x2, y2, z2 = p.X + half.X, p.Y + half.Y, p.Z + half.Z
+
+        minX = minX and math.min(minX, x1) or x1
+        minY = minY and math.min(minY, y1) or y1
+        minZ = minZ and math.min(minZ, z1) or z1
+        maxX = maxX and math.max(maxX, x2) or x2
+        maxY = maxY and math.max(maxY, y2) or y2
+        maxZ = maxZ and math.max(maxZ, z2) or z2
     end
 
     if not minX then return nil end
 
-    return Vector3.new((minX + maxX) / 2, minY + 6, (minZ + maxZ) / 2)
+    local center = Vector3.new((minX + maxX) / 2, minY + 6, (minZ + maxZ) / 2)
+    local size = Vector3.new(maxX - minX, maxY - minY, maxZ - minZ)
+    return center, size
+end
+
+local function centerFromParts(parts)
+    local center = boundsFromParts(parts)
+    return center
+end
+
+local function getAreaBoxFieldInfo(area)
+    if not area then return nil, nil end
+
+    local areaIndex = getAreaIndexFromModel(area)
+    local areaData = areaIndex and getAreaData(areaIndex)
+
+    if BoxController and BoxController.GetField then
+        local ids = {
+            areaData and areaData.Id,
+            areaData and areaData.FieldId,
+            areaData and areaData.BoxFieldId,
+            areaData and areaData.Name,
+            area and area.Name,
+            areaIndex and tostring(areaIndex),
+        }
+
+        local seen = {}
+        for _, id in ipairs(ids) do
+            if id and not seen[id] then
+                seen[id] = true
+
+                local ok, field = pcall(function()
+                    return BoxController.GetField(id)
+                end)
+
+                if ok and field and field.Position and field.Size then
+                    return field.Position, field.Size
+                end
+            end
+        end
+    end
+
+    local fieldParts = {}
+    for _, inst in ipairs(area:GetDescendants()) do
+        if partLooksLikeBoxField(inst) then
+            table.insert(fieldParts, inst)
+        end
+    end
+
+    return boundsFromParts(fieldParts)
 end
 
 local function getModelCenter(model)
     if not model then return nil end
 
     if model:IsA("BasePart") then return model.Position end
+
+    local fieldCenter = getAreaBoxFieldInfo(model)
+    if fieldCenter then return fieldCenter end
 
     local areaIndex = getAreaIndexFromModel(model)
     local areaData = areaIndex and getAreaData(areaIndex)
@@ -675,13 +771,6 @@ local function getModelCenter(model)
             return BoxController.GetField(areaData.Id)
         end)
         if ok and field and field.Position then return field.Position end
-    end
-
-    if model:IsA("Model") then
-        local ok, cf = pcall(function()
-            return model:GetPivot()
-        end)
-        if ok and cf then return cf.Position end
     end
 
     local useful = {}
@@ -700,6 +789,13 @@ local function getModelCenter(model)
     local usefulCenter = centerFromParts(useful)
     if usefulCenter then return usefulCenter end
 
+    if model:IsA("Model") then
+        local ok, cf = pcall(function()
+            return model:GetPivot()
+        end)
+        if ok and cf then return cf.Position end
+    end
+
     local fallbackCenter = centerFromParts(fallback)
     if fallbackCenter then return fallbackCenter end
 
@@ -709,7 +805,16 @@ end
 
 local function refreshFarmRoute()
     if not farmAreaCenter then return end
-    farmPoints = buildRoutePoints(farmAreaCenter, farmAreaRadius, farmAreaStep)
+
+    local radius = farmAreaRadius
+    if farmAreaSize then
+        local fieldRadius = math.min(farmAreaSize.X, farmAreaSize.Z) / 2 - 8
+        if fieldRadius > 12 then
+            radius = math.min(radius, fieldRadius)
+        end
+    end
+
+    farmPoints = buildRoutePoints(farmAreaCenter, radius, farmAreaStep)
     farmPointIndex = 1
 end
 
@@ -717,7 +822,11 @@ local function startFarmAreaRoute()
     if areaConn then areaConn:Disconnect() areaConn = nil end
 
     local area = getAreaModel(farmAreaIndex)
-    farmAreaCenter = getModelCenter(area)
+    farmAreaCenter, farmAreaSize = getAreaBoxFieldInfo(area)
+    if not farmAreaCenter then
+        farmAreaCenter = getModelCenter(area)
+        farmAreaSize = nil
+    end
 
     if not farmAreaCenter then
         notify(I.warn .. " Area Farm", "Area nao encontrada: " .. tostring(farmAreaIndex), 3)
@@ -762,8 +871,25 @@ local function startFarmAreaRoute()
     notify(I.map .. " Area Farm", "Farmando area " .. tostring(farmAreaIndex) .. " - " .. label, 3)
 end
 
+local function stopCharacterWalk()
+    local c = player.Character
+    local r = c and c:FindFirstChild("HumanoidRootPart")
+    local h = c and c:FindFirstChildOfClass("Humanoid")
+
+    if h then
+        h:Move(Vector3.new(0, 0, 0), true)
+        if r then
+            h:MoveTo(r.Position)
+        end
+    end
+end
+
 local function stopFarmAreaRoute()
     if areaConn then areaConn:Disconnect() areaConn = nil end
+    farmPoints = {}
+    farmPointIndex = 1
+    farmAreaLastRescue = 0
+    stopCharacterWalk()
 end
 
 local function getReleasedAreaCount()
@@ -2080,6 +2206,8 @@ AreaFarmTab:CreateToggle({
             checkAutoFarmIndex()
         else
             currentAutoFarmIndexArea = nil
+            autoFarmArea = false
+            stopFarmAreaRoute()
         end
     end,
 })
