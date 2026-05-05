@@ -2,7 +2,16 @@ local Rayfield
 do
     local ok, result = pcall(function()
         local source = game:HttpGet("https://sirius.menu/rayfield", true)
-        local fn = loadstring(source)
+        local loader = loadstring or load
+        if type(loader) ~= "function" then
+            error("Executor sem loadstring/load.")
+        end
+
+        local fn, loadErr = loader(source)
+        if type(fn) ~= "function" then
+            error(loadErr or "Rayfield retornou codigo invalido.")
+        end
+
         return fn()
     end)
 
@@ -350,7 +359,62 @@ local blur = Instance.new("BlurEffect")
 blur.Size = 0
 blur.Parent = Lighting
 
-local Window = Rayfield:CreateWindow({
+local function makeStubTab(label)
+    local stub = {}
+
+    local function noop()
+        return nil
+    end
+
+    stub.CreateSection = noop
+    stub.CreateToggle = noop
+    stub.CreateButton = noop
+    stub.CreateInput = noop
+    stub.CreateDropdown = noop
+    stub.CreateSlider = noop
+    stub.CreateParagraph = noop
+
+    warn("UnboxingHub: usando aba fallback:", tostring(label))
+    return stub
+end
+
+local function protectTab(tab, label)
+    if type(tab) ~= "table" then
+        return makeStubTab(label)
+    end
+
+    for _, methodName in ipairs({
+        "CreateSection",
+        "CreateToggle",
+        "CreateButton",
+        "CreateInput",
+        "CreateDropdown",
+        "CreateSlider",
+        "CreateParagraph",
+    }) do
+        local rawMethod = tab[methodName]
+
+        if type(rawMethod) == "function" then
+            tab[methodName] = function(self, ...)
+                local ok, result = pcall(rawMethod, self, ...)
+                if not ok then
+                    warn("UnboxingHub UI falhou em " .. tostring(label) .. ":" .. methodName, result)
+                end
+                return ok and result or nil
+            end
+        else
+            tab[methodName] = function()
+                warn("UnboxingHub UI sem metodo " .. tostring(methodName) .. " em " .. tostring(label))
+                return nil
+            end
+        end
+    end
+
+    return tab
+end
+
+local windowOk, Window = pcall(function()
+    return Rayfield:CreateWindow({
     Name = I.gift .. " Unboxing Hub V1",
     LoadingTitle = "Unboxing Hub",
     LoadingSubtitle = "by DrSkrr",
@@ -366,22 +430,45 @@ local Window = Rayfield:CreateWindow({
     },
     KeySystem = false,
 })
+end)
 
-local DashboardTab = Window:CreateTab(I.sparkles .. " Dashboard", 4483362458)
-local FarmTab = Window:CreateTab(I.box .. " Farm", 4483362458)
-local EventTab = Window:CreateTab(I.party .. " Event", 4483362458)
-local RewardsTab = Window:CreateTab(I.gift .. " Rewards", 4483362458)
-local CratesTab = Window:CreateTab(I.box .. " Crates", 4483362458)
-local AutoSellTab = Window:CreateTab(I.sell .. " Auto Sell", 4483362458)
-local AutoAttackTab = Window:CreateTab(I.sword .. " Auto Attack", 4483362458)
-local AreaFarmTab = Window:CreateTab(I.map .. " Area Farm", 4483362458)
-local DungeonTab = Window:CreateTab(I.map .. " Dungeon", 4483362458)
-local WheelTab = Window:CreateTab(I.wheel .. " Wheel", 4483362458)
-local WebhookTab = Window:CreateTab(I.link .. " Webhook", 4483362458)
-local StatsTab = Window:CreateTab(I.chart .. " Stats", 4483362458)
-local DebugTab = Window:CreateTab(I.bug .. " Debug", 4483362458)
-local VisualTab = Window:CreateTab(I.eye .. " Visual", 4483362458)
-local OtherTab = Window:CreateTab(I.gear .. " Other", 4483362458)
+if not windowOk or type(Window) ~= "table" then
+    warn("UnboxingHub: CreateWindow falhou:", Window)
+    Window = {}
+end
+
+local function createTab(name)
+    if type(Window.CreateTab) ~= "function" then
+        warn("UnboxingHub: Window.CreateTab nao encontrado.")
+        return makeStubTab(name)
+    end
+
+    local ok, tab = pcall(function()
+        return Window:CreateTab(name, 4483362458)
+    end)
+
+    if not ok then
+        warn("UnboxingHub: CreateTab falhou:", name, tab)
+    end
+
+    return protectTab(ok and tab or nil, name)
+end
+
+local DashboardTab = createTab(I.sparkles .. " Dashboard")
+local FarmTab = createTab(I.box .. " Farm")
+local EventTab = createTab(I.party .. " Event")
+local RewardsTab = createTab(I.gift .. " Rewards")
+local CratesTab = createTab(I.box .. " Crates")
+local AutoSellTab = createTab(I.sell .. " Auto Sell")
+local AutoAttackTab = createTab(I.sword .. " Auto Attack")
+local AreaFarmTab = createTab(I.map .. " Area Farm")
+local DungeonTab = createTab(I.map .. " Dungeon")
+local WheelTab = createTab(I.wheel .. " Wheel")
+local WebhookTab = createTab(I.link .. " Webhook")
+local StatsTab = createTab(I.chart .. " Stats")
+local DebugTab = createTab(I.bug .. " Debug")
+local VisualTab = createTab(I.eye .. " Visual")
+local OtherTab = createTab(I.gear .. " Other")
 
 local function formatTime(seconds)
     seconds = math.floor(seconds)
