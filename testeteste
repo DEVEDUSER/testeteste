@@ -99,6 +99,15 @@ local I = {
     pet = icon(0x1F43E),
     sell = icon(0x1F4B8),
     bolt = icon(0x26A1),
+    sparkles = icon(0x2728),
+    stop = icon(0x23F9),
+    pause = icon(0x23F8),
+    bug = icon(0x1F41E),
+    target = icon(0x1F3AF),
+    list = icon(0x1F4CB),
+    home = icon(0x1F3E0),
+    heart = icon(0x2764),
+    package = icon(0x1F4E5),
 }
 
 local function notify(title, content, duration)
@@ -113,6 +122,9 @@ local function notify(title, content, duration)
 end
 
 local State = {
+    paused = false,
+    overlayEnabled = true,
+
     autoGoldRush = false,
     autoEasterRush = false,
     autoClose = false,
@@ -141,6 +153,12 @@ local State = {
     autoCollectTreasure = false,
     autoClaimChest = false,
     autoFarmIndex = false,
+    autoSellDuringIndex = true,
+    autoIndexWebhook = true,
+    autoAttackAdaptive = true,
+    autoAttackOnlyInField = true,
+    merchantSmartMode = false,
+    keepOnePerRarity = true,
 
     autoEasterCrate = false,
     autoBasicPerkCrate = false,
@@ -158,9 +176,13 @@ local State = {
 local crateAmount = 1
 local autoRushWorld = 108
 local autoAttackDelay = 0.05
+local autoAttackPriority = "Nearest"
 local autoSellDelay = 5
 local merchantDelay = 1
 local autoCrateDelay = 1
+local crateBurstAmount = 1
+local crateOpenLimit = 0
+local crateStopAt = 0
 
 local selectedDungeonWorld = "Auto"
 local selectedDungeonDifficulty = "Easy"
@@ -189,6 +211,7 @@ local lastWebhookAt = os.clock()
 local autoFavoriteRareDrops = true
 local autoFavoriteGoodPerks = true
 local perkFavoriteMinStat = 4.0
+local perkFavoriteMinTotalStat = 0
 
 local wheelDelay = 0.03
 local wheelBurst = 1
@@ -225,6 +248,8 @@ local farmAreaSize
 local farmPoints = {}
 local farmPointIndex = 1
 local farmAreaLastRescue = 0
+local farmAreaLastRouteRefresh = 0
+local farmAreaLastBoxCount = 0
 
 local autoFarmIndexMaxArea = 0
 local autoFarmIndexCheckDelay = 8
@@ -238,6 +263,32 @@ local lastRewardAt = 0
 local lastPerkAt = 0
 local lastTreasureAt = 0
 local lastChestAt = 0
+local lastBoxesPerMinuteAt = os.clock()
+local lastBoxesPerMinuteCount = 0
+local boxesPerMinute = 0
+local attacksThisSecond = 0
+local attacksPerSecond = 0
+local lastAttackSecondAt = os.clock()
+local lastAttackAt = 0
+local lastAttackHadTargetAt = 0
+local lastAttackWarningAt = 0
+local lastTeleportAt = 0
+local safePosition = nil
+local lastCoreTick = 0
+local currentCoreState = "Ready"
+local currentDungeonState = "Idle"
+local currentIndexState = "Idle"
+local currentMerchantState = "Idle"
+local currentRushState = "Idle"
+local skippedIndexAreas = {}
+local customMerchantItems = {}
+local currentWorldName = tostring(game.PlaceId)
+local overlayGui
+local overlayLabel
+
+local LastError = {}
+local RemoteStats = {}
+local Cooldowns = {}
 
 local Stats = {
     startedAt = os.clock(),
@@ -261,6 +312,13 @@ local Stats = {
     dungeonsCompleted = 0,
     indexTargetArea = 0,
     indexMissingHats = 0,
+    perksFavorited = 0,
+    rareDropsProtected = 0,
+    questsClaimed = 0,
+    remoteBlocked = 0,
+    lastCrateReward = "None",
+    lastMerchantResult = "None",
+    lastAreaName = "None",
 }
 
 local sellRarities = {
@@ -296,6 +354,7 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false,
 })
 
+local DashboardTab = Window:CreateTab(I.sparkles .. " Dashboard", 4483362458)
 local FarmTab = Window:CreateTab(I.box .. " Farm", 4483362458)
 local EventTab = Window:CreateTab(I.party .. " Event", 4483362458)
 local RewardsTab = Window:CreateTab(I.gift .. " Rewards", 4483362458)
@@ -307,6 +366,7 @@ local DungeonTab = Window:CreateTab(I.map .. " Dungeon", 4483362458)
 local WheelTab = Window:CreateTab(I.wheel .. " Wheel", 4483362458)
 local WebhookTab = Window:CreateTab(I.link .. " Webhook", 4483362458)
 local StatsTab = Window:CreateTab(I.chart .. " Stats", 4483362458)
+local DebugTab = Window:CreateTab(I.bug .. " Debug", 4483362458)
 local VisualTab = Window:CreateTab(I.eye .. " Visual", 4483362458)
 local OtherTab = Window:CreateTab(I.gear .. " Other", 4483362458)
 
@@ -316,6 +376,104 @@ local function formatTime(seconds)
     local m = math.floor((seconds % 3600) / 60)
     local s = seconds % 60
     return string.format("%02d:%02d:%02d", h, m, s)
+end
+
+local function formatNumber(value)
+    local str = tostring(math.floor(tonumber(value) or 0))
+    local result = str
+
+    while true do
+        local changed
+        result, changed = result:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        if changed == 0 then break end
+    end
+
+    return result
+end
+
+local function logError(systemName, err)
+    local key = tostring(systemName or "Core")
+    LastError[key] = {
+        Message = tostring(err or "Unknown error"),
+        Time = os.clock(),
+    }
+    currentCoreState = "ERROR: " .. key
+end
+
+local function safeRun(systemName, fn)
+    local ok, result = pcall(fn)
+    if not ok then
+        logError(systemName, result)
+    end
+    return ok, result
+end
+
+local function canUseCooldown(key, delay)
+    local now = os.clock()
+    local last = Cooldowns[key] or 0
+    if now - last < delay then
+        Stats.remoteBlocked = Stats.remoteBlocked + 1
+        return false
+    end
+
+    Cooldowns[key] = now
+    return true
+end
+
+local function recordRemote(name, ok, result)
+    local info = RemoteStats[name] or {
+        Calls = 0,
+        Success = 0,
+        Failed = 0,
+        Last = "Never",
+    }
+
+    info.Calls = info.Calls + 1
+    info.Last = ok and "OK" or tostring(result)
+    if ok then
+        info.Success = info.Success + 1
+    else
+        info.Failed = info.Failed + 1
+        logError("Remote " .. tostring(name), result)
+    end
+
+    RemoteStats[name] = info
+end
+
+local function safeFire(systemName, remote, remoteName, cooldown, ...)
+    if not remote then
+        logError(systemName, tostring(remoteName) .. " nao encontrado.")
+        return false
+    end
+
+    local key = tostring(systemName) .. ":" .. tostring(remoteName)
+    if cooldown and cooldown > 0 and not canUseCooldown(key, cooldown) then return false end
+
+    local args = { ... }
+    local ok, result = pcall(function()
+        remote:FireServer(unpack(args))
+    end)
+
+    recordRemote(remoteName or systemName, ok, result)
+    return ok, result
+end
+
+local function safeInvoke(systemName, remote, remoteName, cooldown, ...)
+    if not remote then
+        logError(systemName, tostring(remoteName) .. " nao encontrado.")
+        return false
+    end
+
+    local key = tostring(systemName) .. ":" .. tostring(remoteName)
+    if cooldown and cooldown > 0 and not canUseCooldown(key, cooldown) then return false end
+
+    local args = { ... }
+    local ok, result = pcall(function()
+        return remote:InvokeServer(unpack(args))
+    end)
+
+    recordRemote(remoteName or systemName, ok, result)
+    return ok, result
 end
 
 local function countDict(tbl)
@@ -335,6 +493,407 @@ local function recordMerchant(itemId)
     Stats.merchantBought = Stats.merchantBought + 1
     Stats.merchantByName[itemId] = (Stats.merchantByName[itemId] or 0) + 1
 end
+
+local function getCharacterParts()
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    return char, root, humanoid
+end
+
+local function stopCharacterWalk()
+    local _, root, humanoid = getCharacterParts()
+
+    if humanoid then
+        humanoid:Move(Vector3.new(0, 0, 0), true)
+        if root then
+            humanoid:MoveTo(root.Position)
+        end
+    end
+end
+
+local function resetCamera()
+    local camera = workspace.CurrentCamera
+
+    if camConn then camConn:Disconnect() camConn = nil end
+    if camera then camera.CameraType = Enum.CameraType.Custom end
+    State.camLock = false
+end
+
+local function stopMovementControllers()
+    autoFarmArea = false
+    State.tpCamera = false
+
+    if areaConn then areaConn:Disconnect() areaConn = nil end
+    if tpConn then tpConn:Disconnect() tpConn = nil end
+
+    farmPoints = {}
+    routePoints = {}
+    stopCharacterWalk()
+end
+
+local function stopAllSystems(keepConfig)
+    State.paused = false
+    State.autoGoldRush = false
+    State.autoEasterRush = false
+    State.autoClose = false
+    State.autoCloseRushResults = false
+    State.autoClaim = false
+    State.autoBP = false
+    State.autoDaily = false
+    State.autoAch = false
+    State.autoPerk = false
+    State.autoClaimDamageQuest = false
+    State.autoBoxPassClaimAll = false
+    State.autoSellHats = false
+    State.autoSellPets = false
+    State.autoSellPerks = false
+    State.autoAttackBoxes = false
+    State.autoWheel = false
+    State.autoDungeon = false
+    State.autoClaimDungeonResults = keepConfig and State.autoClaimDungeonResults or State.autoClaimDungeonResults
+    State.autoCollectTreasure = false
+    State.autoClaimChest = false
+    State.autoFarmIndex = false
+    State.autoEasterCrate = false
+    State.autoBasicPerkCrate = false
+    State.autoHatDropBoost = false
+    State.autoComumEventPotion = false
+    State.autoRareEventPotion = false
+    State.autoEpicEventPotion = false
+    State.autoLegendaryEventPotion = false
+    State.autoGodlyEventPotion = false
+    State.autoMythicEventPotion = false
+    State.autoMoleBoost = false
+    State.autoEventBooster = false
+
+    for crateId in pairs(autoCrates) do
+        autoCrates[crateId] = false
+    end
+
+    currentDungeonState = "Idle"
+    currentIndexState = "Idle"
+    currentMerchantState = "Idle"
+    currentRushState = "Idle"
+    currentAutoFarmIndexArea = nil
+    currentDungeonId = nil
+    dungeonVisitedDoors = {}
+    dungeonNoBoxSince = nil
+
+    stopMovementControllers()
+    resetCamera()
+    currentCoreState = "Stopped"
+end
+
+local function softStop()
+    State.paused = not State.paused
+
+    if State.paused then
+        stopMovementControllers()
+        currentCoreState = "Paused"
+    else
+        currentCoreState = "Running"
+    end
+end
+
+local function panicMode()
+    local _, root = getCharacterParts()
+    if root then
+        safePosition = safePosition or root.Position
+    end
+
+    stopAllSystems(true)
+
+    if root and safePosition then
+        root.CFrame = CFrame.new(safePosition + Vector3.new(0, 4, 0))
+    end
+
+    currentCoreState = "Panic"
+end
+
+local function setSafePosition()
+    local _, root = getCharacterParts()
+    if root then
+        safePosition = root.Position
+        notify(I.home .. " Safe Position", "Posicao segura salva.", 2)
+    end
+end
+
+local getAreaIndexFromModel
+local getAreaIndexInfo
+local refreshFarmRoute
+local sendWebhook
+local buildPrettyWebhook
+
+local function getWorldName()
+    local name = tostring(game.PlaceId)
+
+    pcall(function()
+        if UniverseData and UniverseData.ID then
+            name = tostring(UniverseData.ID)
+        elseif game.PlaceId then
+            name = "Place " .. tostring(game.PlaceId)
+        end
+    end)
+
+    currentWorldName = name
+    return name
+end
+
+local function getLoadedAreaList()
+    local result = {}
+    local areas = workspace:FindFirstChild("Areas")
+    if not areas then return result end
+
+    for _, area in ipairs(areas:GetChildren()) do
+        local index = getAreaIndexFromModel and getAreaIndexFromModel(area) or nil
+        table.insert(result, {
+            Index = index or 999999,
+            Name = tostring(area.Name),
+            Model = area,
+        })
+    end
+
+    table.sort(result, function(a, b)
+        if a.Index == b.Index then return a.Name < b.Name end
+        return a.Index < b.Index
+    end)
+
+    return result
+end
+
+local function getLoadedAreasText(limit)
+    local lines = {}
+    local maxItems = limit or 12
+
+    for i, info in ipairs(getLoadedAreaList()) do
+        if i > maxItems then
+            table.insert(lines, "+ mais " .. tostring(#getLoadedAreaList() - maxItems) .. " areas...")
+            break
+        end
+
+        table.insert(lines, tostring(info.Index ~= 999999 and info.Index or "?") .. " - " .. info.Name)
+    end
+
+    if #lines == 0 then return "Nenhuma area carregada." end
+    return table.concat(lines, "\n")
+end
+
+local function getLoadedAreaOptions()
+    local options = {}
+    for _, info in ipairs(getLoadedAreaList()) do
+        local indexText = tostring(info.Index ~= 999999 and info.Index or "?")
+        table.insert(options, indexText .. " - " .. info.Name)
+    end
+
+    if #options == 0 then
+        table.insert(options, "Nenhuma area")
+    end
+
+    return options
+end
+
+local function parseAreaOption(option)
+    local n = tostring(option or ""):match("^(%d+)")
+    return n and tonumber(n) or nil
+end
+
+local function healthValue(name, value)
+    return (value and I.check or I.warn) .. " " .. name
+end
+
+local function getHealthText()
+    local lines = {
+        healthValue("RE", RE ~= nil),
+        healthValue("RF", RF ~= nil),
+        healthValue("PlayerData", PlayerData ~= nil and PlayerData.data ~= nil),
+        healthValue("BoxController", BoxController ~= nil),
+        healthValue("AreaData", AreaData ~= nil),
+        healthValue("StateUtil", StateUtil ~= nil),
+        healthValue("Clock", Clock ~= nil),
+        healthValue("Webhook URL", webhookUrl ~= ""),
+    }
+
+    return table.concat(lines, "\n")
+end
+
+local function remoteExists(folder, name)
+    return folder and folder:FindFirstChild(name) ~= nil
+end
+
+local function getRemoteCheckText()
+    local checks = {
+        { RE, "AttackBox" },
+        { RE, "StartBoxRush" },
+        { RE, "ActivatePerk" },
+        { RE, "CollectQuest" },
+        { RE, "ClaimPlaytimeReward" },
+        { RE, "ClaimBattlePassTask" },
+        { RE, "ClaimLoginReward" },
+        { RE, "ClaimAllAchievements" },
+        { RF, "SellItems" },
+        { RF, "OpenCrate" },
+        { RF, "PurchaseMerchantItem" },
+        { RF, "ClaimTimedReward" },
+        { RF, "SpinTicketWheel" },
+    }
+
+    local lines = {}
+    for _, item in ipairs(checks) do
+        table.insert(lines, healthValue(item[2], remoteExists(item[1], item[2])))
+    end
+
+    return table.concat(lines, "\n")
+end
+
+local function getLastErrorText()
+    local newestName
+    local newest
+
+    for name, info in pairs(LastError) do
+        if not newest or (info.Time or 0) > (newest.Time or 0) then
+            newestName = name
+            newest = info
+        end
+    end
+
+    if not newest then return "Nenhum erro registrado." end
+    return tostring(newestName) .. ": " .. tostring(newest.Message)
+end
+
+local function getRemoteStatsText(limit)
+    local items = {}
+    for name, info in pairs(RemoteStats) do
+        table.insert(items, {
+            Name = name,
+            Calls = info.Calls or 0,
+            Success = info.Success or 0,
+            Failed = info.Failed or 0,
+            Last = info.Last or "None",
+        })
+    end
+
+    table.sort(items, function(a, b) return a.Calls > b.Calls end)
+    if #items == 0 then return "Nenhum remote usado ainda." end
+
+    local lines = {}
+    for i, info in ipairs(items) do
+        if i > (limit or 8) then break end
+        table.insert(lines, info.Name .. " | calls " .. tostring(info.Calls) .. " | ok " .. tostring(info.Success) .. " | fail " .. tostring(info.Failed))
+    end
+
+    return table.concat(lines, "\n")
+end
+
+local function parseSkippedAreas(text)
+    skippedIndexAreas = {}
+    for num in tostring(text or ""):gmatch("%d+") do
+        skippedIndexAreas[tonumber(num)] = true
+    end
+end
+
+local function getIndexMissingText(index, limit)
+    local info = getAreaIndexInfo and getAreaIndexInfo(index) or nil
+    if not info then return "Index nao encontrado." end
+    if info.Missing <= 0 then return "Area completa." end
+
+    local lines = {}
+    for i, itemId in ipairs(info.MissingItems or {}) do
+        if i > (limit or 12) then
+            table.insert(lines, "+ mais " .. tostring(#info.MissingItems - (limit or 12)) .. " itens...")
+            break
+        end
+        table.insert(lines, tostring(itemId))
+    end
+
+    return table.concat(lines, "\n")
+end
+
+local function recenterFarmRoute()
+    local _, root = getCharacterParts()
+    if not root then return end
+
+    farmAreaCenter = root.Position
+    farmAreaSize = nil
+    refreshFarmRoute()
+    notify(I.target .. " Route", "Rota recentralizada na posicao atual.", 2)
+end
+
+local function updateBoxesPerMinute()
+    local now = os.clock()
+    if now - lastBoxesPerMinuteAt >= 10 then
+        local diff = Stats.boxesBroken - lastBoxesPerMinuteCount
+        boxesPerMinute = math.floor(diff / math.max(now - lastBoxesPerMinuteAt, 1) * 60)
+        lastBoxesPerMinuteAt = now
+        lastBoxesPerMinuteCount = Stats.boxesBroken
+    end
+
+    if now - lastAttackSecondAt >= 1 then
+        attacksPerSecond = attacksThisSecond
+        attacksThisSecond = 0
+        lastAttackSecondAt = now
+    end
+end
+
+local function ensureOverlay()
+    if overlayGui or not State.overlayEnabled then return end
+
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return end
+
+    overlayGui = Instance.new("ScreenGui")
+    overlayGui.Name = "UnboxingHubOverlay"
+    overlayGui.ResetOnSpawn = false
+    overlayGui.IgnoreGuiInset = true
+    overlayGui.Parent = playerGui
+
+    overlayLabel = Instance.new("TextLabel")
+    overlayLabel.Name = "Status"
+    overlayLabel.AnchorPoint = Vector2.new(0, 0)
+    overlayLabel.Position = UDim2.fromOffset(12, 88)
+    overlayLabel.Size = UDim2.fromOffset(360, 154)
+    overlayLabel.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+    overlayLabel.BackgroundTransparency = 0.22
+    overlayLabel.BorderSizePixel = 0
+    overlayLabel.TextColor3 = Color3.fromRGB(245, 248, 255)
+    overlayLabel.TextStrokeTransparency = 0.8
+    overlayLabel.Font = Enum.Font.SourceSansBold
+    overlayLabel.TextSize = 16
+    overlayLabel.TextXAlignment = Enum.TextXAlignment.Left
+    overlayLabel.TextYAlignment = Enum.TextYAlignment.Top
+    overlayLabel.Parent = overlayGui
+end
+
+local function updateOverlay()
+    if not State.overlayEnabled then
+        if overlayGui then overlayGui:Destroy() overlayGui = nil overlayLabel = nil end
+        return
+    end
+
+    ensureOverlay()
+    if not overlayLabel then return end
+
+    overlayLabel.Text =
+        I.gift .. " Unboxing Hub V3\n"
+        .. I.bolt .. " Core: " .. tostring(currentCoreState) .. (State.paused and " (PAUSED)" or "") .. "\n"
+        .. I.map .. " World: " .. getWorldName() .. "\n"
+        .. I.star .. " Index: " .. tostring(currentIndexState) .. " | Area " .. tostring(Stats.indexTargetArea) .. " | faltam " .. tostring(Stats.indexMissingHats) .. "\n"
+        .. I.sword .. " Attack: " .. (State.autoAttackBoxes and "ON" or "OFF") .. " | " .. tostring(attacksPerSecond) .. "/s\n"
+        .. I.box .. " Boxes/min: " .. tostring(boxesPerMinute) .. " | Total: " .. formatNumber(Stats.boxesBroken) .. "\n"
+        .. I.map .. " Dungeon: " .. tostring(currentDungeonState) .. "\n"
+        .. I.warn .. " Last Error: " .. getLastErrorText()
+end
+
+local function hasAnyAutomation()
+    if State.autoGoldRush or State.autoEasterRush or State.autoClaim or State.autoBP or State.autoDaily or State.autoAch then return true end
+    if State.autoPerk or State.autoAttackBoxes or State.autoWheel or State.autoDungeon or State.autoFarmIndex then return true end
+    if State.autoCollectTreasure or State.autoClaimChest or State.autoSellHats or State.autoSellPets or State.autoSellPerks then return true end
+    for _, enabled in pairs(autoCrates) do if enabled then return true end end
+    return State.autoEasterCrate or State.autoBasicPerkCrate or State.autoHatDropBoost or State.autoComumEventPotion
+        or State.autoRareEventPotion or State.autoEpicEventPotion or State.autoLegendaryEventPotion
+        or State.autoGodlyEventPotion or State.autoMythicEventPotion or State.autoMoleBoost or State.autoEventBooster
+end
+
 
 local function getItemData(invItem)
     if not ItemData or not invItem or not invItem.ItemId then return nil end
@@ -385,6 +944,31 @@ local function getBestPerkStat(invItem)
     return best
 end
 
+local function getPerkStatSum(invItem)
+    local total = 0
+
+    local function scan(v)
+        if type(v) == "number" then
+            total = total + v
+        elseif type(v) == "table" then
+            for _, x in pairs(v) do scan(x) end
+        end
+    end
+
+    if invItem then
+        scan(invItem.Stats)
+        scan(invItem.Stat)
+        scan(invItem.Modifiers)
+        scan(invItem.Boosts)
+        scan(invItem.boosts)
+        scan(invItem.Multiplier)
+        scan(invItem.Power)
+        scan(invItem.Value)
+    end
+
+    return total
+end
+
 local function isRareDrop(invItem)
     if not invItem then return false end
     local txt = string.lower(tostring(invItem.ItemId or invItem.Id or invItem.Name or ""))
@@ -426,17 +1010,49 @@ local function protectSpecialItems()
         if storage then
             for uid, invItem in pairs(storage) do
                 if autoFavoriteRareDrops and isRareDrop(invItem) then
+                    local wasProtected = invItem.IsFavorite or invItem.Locked
                     favoriteOrLockItem(category, uid)
                     invItem.IsFavorite = true
                     invItem.Locked = true
+                    if not wasProtected then Stats.rareDropsProtected = Stats.rareDropsProtected + 1 end
                 elseif category == "Perks" and autoFavoriteGoodPerks and getBestPerkStat(invItem) >= perkFavoriteMinStat then
+                    local wasProtected = invItem.IsFavorite or invItem.Locked
                     favoriteOrLockItem(category, uid)
                     invItem.IsFavorite = true
                     invItem.Locked = true
+                    if not wasProtected then Stats.perksFavorited = Stats.perksFavorited + 1 end
+                elseif category == "Perks" and autoFavoriteGoodPerks and perkFavoriteMinTotalStat > 0 and getPerkStatSum(invItem) >= perkFavoriteMinTotalStat then
+                    local wasProtected = invItem.IsFavorite or invItem.Locked
+                    favoriteOrLockItem(category, uid)
+                    invItem.IsFavorite = true
+                    invItem.Locked = true
+                    if not wasProtected then Stats.perksFavorited = Stats.perksFavorited + 1 end
                 end
             end
         end
     end
+end
+
+local function getAutoSellPreview(category)
+    if not PlayerData or not PlayerData.data then return 0 end
+    local storage = PlayerData.data[category]
+    if not storage then return 0 end
+
+    local kept = {}
+    local total = 0
+
+    for _, invItem in pairs(storage) do
+        if shouldSellItem(invItem, category) then
+            local rarity = getRarityName(getItemData(invItem)) or "Unknown"
+            if State.keepOnePerRarity and not kept[rarity] then
+                kept[rarity] = true
+            else
+                total = total + 1
+            end
+        end
+    end
+
+    return total
 end
 
 local function sellInventoryCategory(category)
@@ -446,6 +1062,7 @@ local function sellInventoryCategory(category)
     if not storage then return end
 
     local list = {}
+    local keptByRarity = {}
 
     for uid, invItem in pairs(storage) do
         local protected = false
@@ -464,8 +1081,20 @@ local function sellInventoryCategory(category)
             protected = true
         end
 
+        if category == "Perks" and autoFavoriteGoodPerks and perkFavoriteMinTotalStat > 0 and getPerkStatSum(invItem) >= perkFavoriteMinTotalStat then
+            favoriteOrLockItem(category, uid)
+            invItem.IsFavorite = true
+            invItem.Locked = true
+            protected = true
+        end
+
         if not protected and shouldSellItem(invItem, category) then
-            table.insert(list, uid)
+            local rarity = getRarityName(getItemData(invItem)) or "Unknown"
+            if State.keepOnePerRarity and not keptByRarity[rarity] then
+                keptByRarity[rarity] = true
+            else
+                table.insert(list, uid)
+            end
         end
     end
 
@@ -475,9 +1104,7 @@ local function sellInventoryCategory(category)
 
     if #list <= 0 then return end
 
-    local ok, result = pcall(function()
-        return RF.SellItems:InvokeServer(list, category)
-    end)
+    local ok, result = safeInvoke("AutoSell", RF:FindFirstChild("SellItems"), "SellItems", 0.3, list, category)
 
     if ok and result then
         Stats.itemsSold = Stats.itemsSold + #list
@@ -486,6 +1113,41 @@ local function sellInventoryCategory(category)
         if category == "Perks" then Stats.perksSold = Stats.perksSold + #list end
         notify(I.check .. " Auto Sell", "Vendeu " .. tostring(#list) .. " " .. category, 2)
     end
+end
+
+local function getBoxScore(box, rootPos)
+    local pos = box and box.CFrame and box.CFrame.Position
+    if not pos then return math.huge end
+
+    local distance = (pos - rootPos).Magnitude
+    local name = string.lower(tostring(box.Name or box.Id or box.ModelId or box.Type or ""))
+    local priority = tostring(autoAttackPriority or "Nearest")
+
+    if priority == "Small Boxes" then
+        local sizeValue = 5
+        if typeof(box.Size) == "Vector3" then
+            sizeValue = box.Size.Magnitude
+        elseif type(box.Size) == "number" then
+            sizeValue = box.Size
+        end
+
+        return sizeValue * 10 + distance * 0.05
+    end
+
+    if priority == "Best Boxes" then
+        local bonus = 0
+        if name:find("gift") or name:find("present") then bonus = bonus - 1500 end
+        if name:find("large") or name:find("big") or name:find("mega") or name:find("giant") then bonus = bonus - 2500 end
+        if name:find("rare") or name:find("gold") or name:find("event") then bonus = bonus - 700 end
+        return distance + bonus
+    end
+
+    if priority == "Low Health" then
+        local remaining = math.max((box.Health or 0) - (box.Damage or 0), 0)
+        return remaining * 0.1 + distance * 0.02
+    end
+
+    return distance
 end
 
 local function getNearestBox()
@@ -499,16 +1161,16 @@ local function getNearestBox()
     if not field then return nil end
 
     local nearest
-    local nearestDist = math.huge
+    local nearestScore = math.huge
     local boxes = field.VisibleBoxes or field.Boxes or {}
 
     for _, box in pairs(boxes) do
         if box and box.CFrame and box.Health and box.Damage then
             if box.Health > box.Damage and not box.IsOpen then
-                local dist = (box.CFrame.Position - root.Position).Magnitude
-                if dist < nearestDist then
+                local score = getBoxScore(box, root.Position)
+                if score < nearestScore then
                     nearest = box
-                    nearestDist = dist
+                    nearestScore = score
                 end
             end
         end
@@ -591,7 +1253,7 @@ local function getAreaIndexFromName(name)
     return n and tonumber(n) or nil
 end
 
-local function getAreaIndexFromModel(area)
+function getAreaIndexFromModel(area)
     if not area then return nil end
 
     local attr = area:GetAttribute("Index")
@@ -827,10 +1489,17 @@ local function getModelCenter(model)
     return part and part.Position or nil
 end
 
-local function refreshFarmRoute()
+function refreshFarmRoute()
     if not farmAreaCenter then return end
 
     local radius = farmAreaRadius
+    local step = farmAreaStep
+
+    local _, _, humanoid = getCharacterParts()
+    if humanoid and humanoid.WalkSpeed and humanoid.WalkSpeed > 0 then
+        step = math.clamp(math.floor(humanoid.WalkSpeed / 5), 18, 55)
+    end
+
     if farmAreaSize then
         local fieldRadius = math.min(farmAreaSize.X, farmAreaSize.Z) / 2 - 8
         if fieldRadius > 12 then
@@ -838,8 +1507,10 @@ local function refreshFarmRoute()
         end
     end
 
-    farmPoints = buildRoutePoints(farmAreaCenter, radius, farmAreaStep)
+    farmPoints = buildRoutePoints(farmAreaCenter, radius, step)
     farmPointIndex = 1
+    farmAreaLastRouteRefresh = os.clock()
+    farmAreaLastBoxCount = Stats.boxesBroken
 end
 
 local function startFarmAreaRoute()
@@ -889,23 +1560,25 @@ local function startFarmAreaRoute()
             farmAreaLastRescue = os.clock()
             r.CFrame = CFrame.new(farmAreaCenter + Vector3.new(0, 4, 0))
         end
+
+        if os.clock() - farmAreaLastRouteRefresh >= 20 then
+            if Stats.boxesBroken <= farmAreaLastBoxCount then
+                refreshFarmRoute()
+                local box = getNearestBox()
+                if box and box.CFrame then
+                    r.CFrame = CFrame.new(box.CFrame.Position + Vector3.new(0, 4, 0))
+                    lastTeleportAt = os.clock()
+                end
+            else
+                farmAreaLastRouteRefresh = os.clock()
+                farmAreaLastBoxCount = Stats.boxesBroken
+            end
+        end
     end)
 
     local label = area and area.Name or tostring(farmAreaIndex)
+    Stats.lastAreaName = label
     notify(I.map .. " Area Farm", "Farmando area " .. tostring(farmAreaIndex) .. " - " .. label, 3)
-end
-
-local function stopCharacterWalk()
-    local c = player.Character
-    local r = c and c:FindFirstChild("HumanoidRootPart")
-    local h = c and c:FindFirstChildOfClass("Humanoid")
-
-    if h then
-        h:Move(Vector3.new(0, 0, 0), true)
-        if r then
-            h:MoveTo(r.Position)
-        end
-    end
 end
 
 local function stopFarmAreaRoute()
@@ -962,7 +1635,7 @@ local function isHatIndexItem(item)
     return itemData and itemData.Type == "Hat"
 end
 
-local function getAreaIndexInfo(index)
+function getAreaIndexInfo(index)
     local data = getAreaData(index)
     local collection = data and data.Collection
     local items = collection and collection.Items
@@ -1001,7 +1674,7 @@ local function findNextIncompleteIndexArea()
     if released > 0 then maxArea = math.min(maxArea, released) end
 
     for i = 1, maxArea do
-        if isAreaLoadedInCurrentWorld(i) then
+        if not skippedIndexAreas[i] and isAreaLoadedInCurrentWorld(i) then
             local info = getAreaIndexInfo(i)
             if info and info.Total > 0 and info.Missing > 0 then
                 return info
@@ -1015,12 +1688,14 @@ end
 local function startAutoIndexTarget(info)
     if not info then return end
 
+    local changedArea = currentAutoFarmIndexArea ~= info.Index
     Stats.indexTargetArea = info.Index
     Stats.indexMissingHats = info.Missing
     farmAreaIndex = info.Index
     autoFarmArea = true
     State.autoAttackBoxes = true
     currentAutoFarmIndexArea = info.Index
+    currentIndexState = "Area " .. tostring(info.Index)
     startFarmAreaRoute()
 
     notify(
@@ -1028,6 +1703,18 @@ local function startAutoIndexTarget(info)
         "Area " .. tostring(info.Index) .. " - " .. tostring(info.Name) .. " | faltam " .. tostring(info.Missing) .. "/" .. tostring(info.Total),
         5
     )
+
+    if changedArea and State.autoIndexWebhook and webhookUrl ~= "" then
+        sendWebhook(buildPrettyWebhook(
+            I.star .. " Auto Index mudou de area",
+            "Agora farmando **Area " .. tostring(info.Index) .. " - " .. tostring(info.Name) .. "**.",
+            0x9B59B6,
+            {
+                { name = I.hat .. " Hats faltando", value = "`" .. tostring(info.Missing) .. "/" .. tostring(info.Total) .. "`", inline = true },
+                { name = I.map .. " Mundo", value = "`" .. getWorldName() .. "`", inline = true },
+            }
+        ), true)
+    end
 end
 
 local function checkAutoFarmIndex()
@@ -1041,18 +1728,32 @@ local function checkAutoFarmIndex()
         if currentAutoFarmIndexArea ~= info.Index or not autoFarmArea then
             startAutoIndexTarget(info)
         else
+            currentIndexState = "Area " .. tostring(info.Index)
             Stats.indexMissingHats = info.Missing
         end
     else
         Stats.indexTargetArea = 0
         Stats.indexMissingHats = 0
         State.autoFarmIndex = false
+        currentIndexState = "Complete"
         if currentAutoFarmIndexArea then
             autoFarmArea = false
             stopFarmAreaRoute()
         end
         currentAutoFarmIndexArea = nil
         notify(I.check .. " Auto Index", "Todas as areas verificadas estao completas.", 5)
+
+        if State.autoIndexWebhook and webhookUrl ~= "" then
+            sendWebhook(buildPrettyWebhook(
+                I.check .. " Auto Index completo",
+                "Todas as areas carregadas/verificadas estao completas neste mundo.",
+                0x57F287,
+                {
+                    { name = I.map .. " Mundo", value = "`" .. getWorldName() .. "`", inline = true },
+                    { name = I.clock .. " Tempo", value = "`" .. formatTime(os.clock() - Stats.startedAt) .. "`", inline = true },
+                }
+            ), true)
+        end
     end
 end
 
@@ -1115,27 +1816,59 @@ end
 local function openCrateAndTrack(crateId, amount)
     amount = tonumber(amount) or 1
 
-    local ok, result = pcall(function()
-        return RF.OpenCrate:InvokeServer(crateId, amount)
-    end)
+    local ok, result = safeInvoke("Crates", RF:FindFirstChild("OpenCrate"), "OpenCrate", 0.15, crateId, amount)
 
     if ok then
         Stats.cratesOpened = Stats.cratesOpened + amount
         Stats.cratesByName[crateId] = (Stats.cratesByName[crateId] or 0) + amount
+        Stats.lastCrateReward = tostring(result)
         trackCrateReward(result)
         notify(I.box .. " Crate", "Abriu " .. tostring(amount) .. "x " .. crateId, 2)
     end
 end
 
-local function buyMerchant(itemId)
-    local ok = pcall(function()
-        RF.PurchaseMerchantItem:InvokeServer({
-            ItemId = itemId,
-            MerchantId = "MoleMerchant",
-        })
-    end)
+local function merchantItemVisible(itemId)
+    if not State.merchantSmartMode then return true end
 
-    if ok then recordMerchant(itemId) end
+    local target = string.lower(tostring(itemId or ""))
+    if target == "" then return false end
+
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if playerGui then
+        for _, inst in ipairs(playerGui:GetDescendants()) do
+            if inst:IsA("TextLabel") or inst:IsA("TextButton") then
+                local text = string.lower(tostring(inst.Text or ""))
+                if text:find(target, 1, true) then return true end
+            end
+        end
+    end
+
+    return false
+end
+
+local function parseCustomMerchantItems(text)
+    customMerchantItems = {}
+    for item in tostring(text or ""):gmatch("[^,%s]+") do
+        if item ~= "" then table.insert(customMerchantItems, item) end
+    end
+end
+
+local function buyMerchant(itemId)
+    if not merchantItemVisible(itemId) then
+        currentMerchantState = "Waiting " .. tostring(itemId)
+        return
+    end
+
+    local ok, result = safeInvoke("Merchant", RF:FindFirstChild("PurchaseMerchantItem"), "PurchaseMerchantItem", 0.2, {
+        ItemId = itemId,
+        MerchantId = "MoleMerchant",
+    })
+
+    Stats.lastMerchantResult = tostring(result)
+    if ok then
+        currentMerchantState = "Bought " .. tostring(itemId)
+        recordMerchant(itemId)
+    end
 end
 
 local function getNearestWheelId()
@@ -1178,9 +1911,8 @@ local function spinSelectedWheel()
 end
 
 local function claimDamageQuest()
-    pcall(function()
-        RE.CollectQuest:FireServer("Damage")
-    end)
+    local ok = safeFire("Rewards", RE:FindFirstChild("CollectQuest"), "CollectQuest", 0.5, "Damage")
+    if ok then Stats.questsClaimed = Stats.questsClaimed + 1 end
 end
 
 local function getBattlePassStage(battlePass)
@@ -1841,7 +2573,80 @@ local function hasOpenPage()
     return true
 end
 
-local function sendWebhook(message, force)
+local function getWebhookTimestamp()
+    local ok, stamp = pcall(function()
+        return os.date("!%Y-%m-%dT%H:%M:%SZ")
+    end)
+
+    return ok and stamp or nil
+end
+
+local function formatWebhookDict(tbl, emptyText, limit)
+    local items = {}
+
+    for name, count in pairs(tbl or {}) do
+        table.insert(items, {
+            Name = tostring(name),
+            Count = tonumber(count) or 0,
+        })
+    end
+
+    table.sort(items, function(a, b)
+        if a.Count == b.Count then
+            return a.Name < b.Name
+        end
+
+        return a.Count > b.Count
+    end)
+
+    if #items == 0 then
+        return emptyText or "Nenhum registro ainda."
+    end
+
+    local lines = {}
+    local maxItems = limit or 8
+
+    for i, item in ipairs(items) do
+        if i > maxItems then
+            table.insert(lines, "+ mais " .. tostring(#items - maxItems) .. " registros...")
+            break
+        end
+
+        table.insert(lines, "`" .. item.Name .. "` x**" .. formatNumber(item.Count) .. "**")
+    end
+
+    local text = table.concat(lines, "\n")
+    if #text > 1000 then
+        text = text:sub(1, 997) .. "..."
+    end
+
+    return text
+end
+
+function buildPrettyWebhook(title, description, color, fields)
+    return {
+        username = "Unboxing Hub",
+        content = I.gift .. " **Unboxing Hub atualizou sua sessao!**",
+        allowed_mentions = { parse = {} },
+        embeds = {
+            {
+                title = tostring(title),
+                description = tostring(description),
+                color = color or 0xF5B342,
+                timestamp = getWebhookTimestamp(),
+                x_footer = {
+                    text = "Unboxing Hub • " .. tostring(player.Name),
+                },
+                fields = fields or {},
+                footer = {
+                    text = "Unboxing Hub - " .. tostring(player.Name),
+                },
+            },
+        },
+    }
+end
+
+function sendWebhook(message, force)
     if webhookUrl == "" then
         if not force then notify(I.link .. " Webhook", "Coloque a URL primeiro.", 3) end
         return
@@ -1853,56 +2658,137 @@ local function sendWebhook(message, force)
         return
     end
 
+    local payload
+    if type(message) == "table" then
+        payload = message
+    else
+        payload = {
+            username = "Unboxing Hub",
+            content = tostring(message),
+            allowed_mentions = { parse = {} },
+        }
+    end
+
     pcall(function()
         req({
             Url = webhookUrl,
             Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode({ content = tostring(message) }),
+            Body = HttpService:JSONEncode(payload),
         })
     end)
 end
 
 local function buildWebhookReport()
-    local lines = {}
-    table.insert(lines, "**Unboxing Hub - Relatorio**")
-    table.insert(lines, "Player: " .. tostring(player.Name))
-    table.insert(lines, "Tempo: " .. formatTime(os.clock() - Stats.startedAt))
-    table.insert(lines, "Easter Rush: " .. tostring(Stats.rushesByName["Easter Rush"] or 0))
-    table.insert(lines, "Gold Rush: " .. tostring(Stats.rushesByName["Gold Rush"] or 0))
-    table.insert(lines, "Caixas quebradas: " .. tostring(Stats.boxesBroken))
-    table.insert(lines, "Crates abertas: " .. tostring(Stats.cratesOpened))
-    table.insert(lines, "EggRain: " .. tostring(Stats.eggRainGained))
-    table.insert(lines, "BombRain: " .. tostring(Stats.bombRainGained))
-    table.insert(lines, "Tickets: " .. tostring(Stats.ticketsGained))
-    table.insert(lines, "Ovos EggHunt: " .. tostring(Stats.eggsCollected))
-    table.insert(lines, "Treasures: " .. tostring(Stats.treasuresCollected))
-    table.insert(lines, "Chests: " .. tostring(Stats.chestsClaimed))
-    table.insert(lines, "Dungeons completas: " .. tostring(Stats.dungeonsCompleted))
+    local indexText = "Sem alvo no momento."
     if Stats.indexTargetArea and Stats.indexTargetArea > 0 then
-        table.insert(lines, "Auto Index: area " .. tostring(Stats.indexTargetArea) .. " | hats faltando: " .. tostring(Stats.indexMissingHats))
+        indexText = "Area **" .. tostring(Stats.indexTargetArea) .. "** | faltam **" .. formatNumber(Stats.indexMissingHats) .. "** hats"
     end
-    table.insert(lines, "Merchant buys: " .. tostring(Stats.merchantBought))
-    table.insert(lines, "Vendidos: " .. tostring(Stats.itemsSold))
-    table.insert(lines, "Hats: " .. tostring(Stats.hatsSold) .. " | Pets: " .. tostring(Stats.petsSold) .. " | Perks: " .. tostring(Stats.perksSold))
-    table.insert(lines, "Crates:")
 
-    local hasCrate = false
-    for crateName, count in pairs(Stats.cratesByName) do
-        hasCrate = true
-        table.insert(lines, "- " .. tostring(crateName) .. ": " .. tostring(count))
-    end
-    if not hasCrate then table.insert(lines, "- nenhuma") end
+    return buildPrettyWebhook(
+        I.chart .. " Relatorio da Sessao",
+        I.sparkles .. " **" .. tostring(player.Name) .. "**, aqui esta seu resumo bonito do Unboxing Hub.",
+        0xFFB347,
+        {
+            {
+                name = I.clock .. " Sessao",
+                value = "**Tempo:** `" .. formatTime(os.clock() - Stats.startedAt) .. "`\n**Player:** `" .. tostring(player.Name) .. "`",
+                inline = true,
+            },
+            {
+                name = I.box .. " Farm",
+                value = "**Boxes:** `" .. formatNumber(Stats.boxesBroken) .. "`\n**Boxes/min:** `" .. formatNumber(boxesPerMinute) .. "`\n**Crates abertas:** `" .. formatNumber(Stats.cratesOpened) .. "`",
+                inline = true,
+            },
+            {
+                name = I.party .. " Rushs",
+                value = "**Easter:** `" .. formatNumber(Stats.rushesByName["Easter Rush"] or 0) .. "`\n**Gold:** `" .. formatNumber(Stats.rushesByName["Gold Rush"] or 0) .. "`",
+                inline = true,
+            },
+            {
+                name = I.gift .. " Drops Especiais",
+                value = "**EggRain:** `" .. formatNumber(Stats.eggRainGained) .. "`\n**BombRain:** `" .. formatNumber(Stats.bombRainGained) .. "`\n**Tickets:** `" .. formatNumber(Stats.ticketsGained) .. "`",
+                inline = true,
+            },
+            {
+                name = I.map .. " Progressos",
+                value = "**Dungeons:** `" .. formatNumber(Stats.dungeonsCompleted) .. "`\n**EggHunt:** `" .. formatNumber(Stats.eggsCollected) .. "`\n**Treasures:** `" .. formatNumber(Stats.treasuresCollected) .. "`\n**Chests:** `" .. formatNumber(Stats.chestsClaimed) .. "`",
+                inline = true,
+            },
+            {
+                name = I.star .. " Auto Index",
+                value = indexText,
+                inline = true,
+            },
+            {
+                name = I.sell .. " Auto Sell",
+                value = "**Total:** `" .. formatNumber(Stats.itemsSold) .. "`\n**Hats:** `" .. formatNumber(Stats.hatsSold) .. "` | **Pets:** `" .. formatNumber(Stats.petsSold) .. "` | **Perks:** `" .. formatNumber(Stats.perksSold) .. "`\n**Perks protegidos:** `" .. formatNumber(Stats.perksFavorited) .. "` | **Raros protegidos:** `" .. formatNumber(Stats.rareDropsProtected) .. "`",
+                inline = false,
+            },
+            {
+                name = I.box .. " Crates por Tipo",
+                value = formatWebhookDict(Stats.cratesByName, "Nenhuma crate aberta ainda.", 8),
+                inline = false,
+            },
+            {
+                name = I.money .. " Mole Merchant",
+                value = "**Compras totais:** `" .. formatNumber(Stats.merchantBought) .. "`\n" .. formatWebhookDict(Stats.merchantByName, "Nenhuma compra ainda.", 8),
+                inline = false,
+            },
+        }
+    )
+end
 
-    table.insert(lines, "Merchant:")
-    local hasMerchant = false
-    for itemId, count in pairs(Stats.merchantByName) do
-        hasMerchant = true
-        table.insert(lines, "- " .. tostring(itemId) .. ": " .. tostring(count))
-    end
-    if not hasMerchant then table.insert(lines, "- nenhum") end
+local function buildWebhookTest()
+    return buildPrettyWebhook(
+        I.bolt .. " Teste do Webhook",
+        I.check .. " Se voce recebeu isso, o webhook esta funcionando perfeitamente.",
+        0x57F287,
+        {
+            {
+                name = I.crown .. " Player",
+                value = "`" .. tostring(player.Name) .. "`",
+                inline = true,
+            },
+            {
+                name = I.clock .. " Sessao",
+                value = "`" .. formatTime(os.clock() - Stats.startedAt) .. "`",
+                inline = true,
+            },
+            {
+                name = I.sparkles .. " Status",
+                value = "**ONLINE** e pronto para relatorios.",
+                inline = false,
+            },
+        }
+    )
+end
 
-    return table.concat(lines, "\n")
+local function buildWebhookKick(message)
+    local cleanMessage = tostring(message or "Sem mensagem capturada."):gsub("`", "'"):sub(1, 900)
+
+    return buildPrettyWebhook(
+        I.warn .. " Player saiu ou foi kickado",
+        "O script detectou uma mensagem de saida/desconexao no cliente.",
+        0xED4245,
+        {
+            {
+                name = I.crown .. " Player",
+                value = "`" .. tostring(player.Name) .. "`",
+                inline = true,
+            },
+            {
+                name = I.clock .. " Tempo de sessao",
+                value = "`" .. formatTime(os.clock() - Stats.startedAt) .. "`",
+                inline = true,
+            },
+            {
+                name = I.warn .. " Mensagem",
+                value = "```" .. cleanMessage .. "```",
+                inline = false,
+            },
+        }
+    )
 end
 
 local function saveConfig()
@@ -1922,13 +2808,19 @@ local function saveConfig()
         autoCrateDelay = autoCrateDelay,
         autoRushWorld = autoRushWorld,
         autoAttackDelay = autoAttackDelay,
+        autoAttackPriority = autoAttackPriority,
         autoSellDelay = autoSellDelay,
         merchantDelay = merchantDelay,
+        crateBurstAmount = crateBurstAmount,
+        crateOpenLimit = crateOpenLimit,
         webhookUrl = webhookUrl,
         webhookDelayMinutes = webhookDelayMinutes,
         autoFavoriteRareDrops = autoFavoriteRareDrops,
         autoFavoriteGoodPerks = autoFavoriteGoodPerks,
         perkFavoriteMinStat = perkFavoriteMinStat,
+        perkFavoriteMinTotalStat = perkFavoriteMinTotalStat,
+        skippedIndexAreas = skippedIndexAreas,
+        customMerchantItems = customMerchantItems,
         wheelDelay = wheelDelay,
         wheelBurst = wheelBurst,
         selectedWheelId = selectedWheelId,
@@ -1978,13 +2870,19 @@ local function loadConfig()
     autoCrateDelay = data.autoCrateDelay or autoCrateDelay
     autoRushWorld = data.autoRushWorld or autoRushWorld
     autoAttackDelay = data.autoAttackDelay or autoAttackDelay
+    autoAttackPriority = data.autoAttackPriority or autoAttackPriority
     autoSellDelay = data.autoSellDelay or autoSellDelay
     merchantDelay = data.merchantDelay or merchantDelay
+    crateBurstAmount = data.crateBurstAmount or crateBurstAmount
+    crateOpenLimit = data.crateOpenLimit or crateOpenLimit
     webhookUrl = data.webhookUrl or webhookUrl
     webhookDelayMinutes = data.webhookDelayMinutes or webhookDelayMinutes
     autoFavoriteRareDrops = data.autoFavoriteRareDrops ~= false
     autoFavoriteGoodPerks = data.autoFavoriteGoodPerks ~= false
     perkFavoriteMinStat = data.perkFavoriteMinStat or perkFavoriteMinStat
+    perkFavoriteMinTotalStat = data.perkFavoriteMinTotalStat or perkFavoriteMinTotalStat
+    if type(data.skippedIndexAreas) == "table" then skippedIndexAreas = data.skippedIndexAreas end
+    if type(data.customMerchantItems) == "table" then customMerchantItems = data.customMerchantItems end
     wheelDelay = data.wheelDelay or wheelDelay
     wheelBurst = data.wheelBurst or wheelBurst
     selectedWheelId = data.selectedWheelId or selectedWheelId
@@ -2043,7 +2941,7 @@ end)
 pcall(function()
     GuiService.ErrorMessageChanged:Connect(function(message)
         if message and message ~= "" then
-            sendWebhook("**Player saiu/kickou**\nPlayer: " .. tostring(player.Name) .. "\nMensagem: " .. tostring(message), true)
+            sendWebhook(buildWebhookKick(message), true)
         end
     end)
 end)
@@ -2056,12 +2954,46 @@ pcall(function()
                 local text = tostring(desc.Text or "")
                 local lower = string.lower(text)
                 if lower:find("kick") or lower:find("disconnect") or lower:find("error") or lower:find("erro") then
-                    sendWebhook("**Player saiu/kickou**\nPlayer: " .. tostring(player.Name) .. "\nMensagem: " .. text, true)
+                    sendWebhook(buildWebhookKick(text), true)
                 end
             end
         end)
     end
 end)
+
+DashboardTab:CreateSection(I.sparkles .. " Core V3")
+DashboardTab:CreateButton({ Name = I.stop .. " Stop All", Callback = function() stopAllSystems(true) notify(I.stop .. " Stop All", "Tudo desligado e movimento parado.", 3) end })
+DashboardTab:CreateButton({ Name = I.pause .. " Soft Stop / Resume", Callback = function() softStop() notify(I.pause .. " Soft Stop", State.paused and "Farm pausado sem resetar configs." or "Farm retomado.", 3) end })
+DashboardTab:CreateButton({ Name = I.warn .. " Panic Mode", Callback = function() panicMode() notify(I.warn .. " Panic", "Tudo desligado e personagem levado para posicao segura.", 4) end })
+DashboardTab:CreateButton({ Name = I.home .. " Salvar Posicao Segura", Callback = setSafePosition })
+DashboardTab:CreateToggle({ Name = I.eye .. " Overlay na Tela", CurrentValue = true, Flag = "OverlayEnabled", Callback = function(v) State.overlayEnabled = v updateOverlay() end })
+DashboardTab:CreateButton({
+    Name = I.chart .. " Mostrar Dashboard",
+    Callback = function()
+        notify(
+            I.chart .. " Dashboard",
+            "Core: " .. tostring(currentCoreState)
+                .. " | World: " .. getWorldName()
+                .. " | Boxes/min: " .. tostring(boxesPerMinute)
+                .. " | Index: " .. tostring(currentIndexState)
+                .. " | Dungeon: " .. tostring(currentDungeonState),
+            7
+        )
+    end,
+})
+
+DashboardTab:CreateSection(I.shield .. " Smart Safety")
+DashboardTab:CreateToggle({ Name = I.pause .. " Pausar Tudo", CurrentValue = false, Flag = "Paused", Callback = function(v) State.paused = v if v then stopMovementControllers() end end })
+DashboardTab:CreateButton({ Name = I.bug .. " Health Check", Callback = function() notify(I.shield .. " Health", getHealthText(), 8) end })
+DashboardTab:CreateButton({ Name = I.link .. " Remote Check", Callback = function() notify(I.link .. " Remotes", getRemoteCheckText(), 8) end })
+
+DebugTab:CreateSection(I.bug .. " Debug")
+DebugTab:CreateButton({ Name = I.shield .. " Health Check", Callback = function() notify(I.shield .. " Health", getHealthText(), 8) end })
+DebugTab:CreateButton({ Name = I.link .. " Remote Check", Callback = function() notify(I.link .. " Remotes", getRemoteCheckText(), 8) end })
+DebugTab:CreateButton({ Name = I.warn .. " Last Error", Callback = function() notify(I.warn .. " Last Error", getLastErrorText(), 8) end })
+DebugTab:CreateButton({ Name = I.list .. " Remote Stats", Callback = function() notify(I.list .. " Remote Stats", getRemoteStatsText(10), 8) end })
+DebugTab:CreateButton({ Name = I.map .. " Areas Carregadas", Callback = function() notify(I.map .. " Areas", getLoadedAreasText(12), 8) end })
+DebugTab:CreateButton({ Name = I.bug .. " Limpar Erros", Callback = function() LastError = {} currentCoreState = "Ready" notify(I.check .. " Debug", "Erros limpos.", 2) end })
 
 FarmTab:CreateSection(I.box .. " Farm")
 FarmTab:CreateInput({
@@ -2088,6 +3020,30 @@ EventTab:CreateInput({
     Callback = function(text)
         local n = tonumber(text)
         if n and n >= 0.2 then merchantDelay = n end
+    end,
+})
+EventTab:CreateToggle({ Name = I.shield .. " Merchant Smart Mode", CurrentValue = false, Flag = "MerchantSmartMode", Callback = function(v) State.merchantSmartMode = v end })
+EventTab:CreateInput({ Name = I.list .. " ItemIds Custom", PlaceholderText = "ItemId1, ItemId2", RemoveTextAfterFocusLost = false, Callback = parseCustomMerchantItems })
+EventTab:CreateButton({
+    Name = I.money .. " Buy Once All Selected",
+    Callback = function()
+        local list = {
+            State.autoEasterCrate and "Easter2024Crate" or nil,
+            State.autoBasicPerkCrate and "BasicPerkCrate" or nil,
+            State.autoHatDropBoost and "HatDropBoost" or nil,
+            State.autoComumEventPotion and "ComumEventPotion" or nil,
+            State.autoRareEventPotion and "RareEventPotion" or nil,
+            State.autoEpicEventPotion and "EpicEventPotion" or nil,
+            State.autoLegendaryEventPotion and "LegendaryEventPotion" or nil,
+            State.autoGodlyEventPotion and "GodlyEventPotion" or nil,
+            State.autoMythicEventPotion and "MythicEventPotion" or nil,
+            State.autoMoleBoost and "MoleBoost" or nil,
+            State.autoEventBooster and "EventBooster" or nil,
+        }
+
+        for _, itemId in ipairs(customMerchantItems) do table.insert(list, itemId) end
+        for _, itemId in ipairs(list) do if itemId then buyMerchant(itemId) task.wait(0.1) end end
+        notify(I.money .. " Merchant", "Tentou comprar selecionados.", 3)
     end,
 })
 EventTab:CreateToggle({ Name = I.egg .. " Easter2024Crate", CurrentValue = false, Flag = "EasterCrate", Callback = function(v) State.autoEasterCrate = v end })
@@ -2130,6 +3086,9 @@ CratesTab:CreateInput({
         if n and n >= 0.2 then autoCrateDelay = n end
     end,
 })
+CratesTab:CreateInput({ Name = I.bolt .. " Open Burst Amount", PlaceholderText = "Padrao: 1", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then crateBurstAmount = math.floor(n) end end })
+CratesTab:CreateInput({ Name = I.stop .. " Parar apos X aberturas", PlaceholderText = "0 = infinito", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0 then crateOpenLimit = math.floor(n) end end })
+CratesTab:CreateInput({ Name = I.clock .. " Parar apos minutos", PlaceholderText = "0 = sem limite", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n > 0 then crateStopAt = os.clock() + n * 60 else crateStopAt = 0 end end })
 
 local function crateToggle(name, crateId)
     CratesTab:CreateToggle({
@@ -2148,6 +3107,24 @@ crateToggle(I.star .. " Auto BasicPerk", "BasicPerkCrate")
 crateToggle(I.box .. " Auto BoxPerk", "BoxPerkCrate")
 crateToggle(I.box .. " Auto Alien DungeonCrateWorld3", "DungeonCrateWorld3")
 crateToggle(I.box .. " Auto CrystalCave DungeonCrateWorld1", "DungeonCrateWorld1")
+CratesTab:CreateButton({
+    Name = I.bolt .. " Open Burst Agora",
+    Callback = function()
+        for crateId, enabled in pairs(autoCrates) do
+            if enabled then
+                openCrateAndTrack(crateId, crateBurstAmount)
+                task.wait(0.1)
+            end
+        end
+    end,
+})
+CratesTab:CreateButton({
+    Name = I.chart .. " Pity / Stats Crates",
+    Callback = function()
+        local easter = Stats.cratesByName.ExclusiveEasterCrate or Stats.cratesByName.Easter2024Crate or 0
+        notify(I.chart .. " Crates", "Abertas: " .. formatNumber(Stats.cratesOpened) .. " | Easter/Pity tracker: " .. tostring(easter) .. "/125 | Ultimo: " .. tostring(Stats.lastCrateReward), 7)
+    end,
+})
 
 CratesTab:CreateButton({
     Name = I.bolt .. " Abrir Selecionadas Agora",
@@ -2165,7 +3142,9 @@ AutoSellTab:CreateSection(I.shield .. " Protecao")
 AutoSellTab:CreateToggle({ Name = I.boom .. " Favoritar EggRain/BombRain", CurrentValue = true, Flag = "AutoFavoriteRareDrops", Callback = function(v) autoFavoriteRareDrops = v end })
 AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perks bons", CurrentValue = true, Flag = "AutoFavoriteGoodPerks", Callback = function(v) autoFavoriteGoodPerks = v end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Stat minimo do Perk", PlaceholderText = "Padrao: 4.0", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n then perkFavoriteMinStat = n end end })
+AutoSellTab:CreateInput({ Name = I.chart .. " Soma minima dos Stats", PlaceholderText = "0 = desligado", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0 then perkFavoriteMinTotalStat = n end end })
 AutoSellTab:CreateInput({ Name = I.clock .. " Delay Auto Sell", PlaceholderText = "Padrao: 5", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then autoSellDelay = n end end })
+AutoSellTab:CreateToggle({ Name = I.shield .. " Manter 1 por raridade", CurrentValue = true, Flag = "KeepOnePerRarity", Callback = function(v) State.keepOnePerRarity = v end })
 
 local function rarityToggles(category, rarities, label)
     AutoSellTab:CreateSection(label)
@@ -2190,19 +3169,50 @@ rarityToggles("Hats", { "Common", "Rare", "Epic", "Legendary", "Godly", "Mythic"
 rarityToggles("Pets", { "Common", "Rare", "Epic", "Legendary", "Godly", "Mythic", "Etherium", "Celestial" }, I.pet .. " Sell Pets")
 rarityToggles("Perks", { "Common", "Rare", "Epic", "Legendary", "Godly", "Mythic" }, I.star .. " Sell Perks")
 AutoSellTab:CreateButton({ Name = I.shield .. " Proteger Agora", Callback = function() protectSpecialItems() notify(I.shield .. " Protecao", "Verificado.", 2) end })
+AutoSellTab:CreateButton({ Name = I.list .. " Preview Venda", Callback = function() notify(I.sell .. " Preview", "Hats: " .. tostring(getAutoSellPreview("Hats")) .. " | Pets: " .. tostring(getAutoSellPreview("Pets")) .. " | Perks: " .. tostring(getAutoSellPreview("Perks")), 6) end })
 AutoSellTab:CreateButton({ Name = I.sell .. " Vender Agora", Callback = function() protectSpecialItems() sellInventoryCategory("Hats") sellInventoryCategory("Pets") sellInventoryCategory("Perks") end })
 
 AutoAttackTab:CreateSection(I.sword .. " Auto Attack")
 AutoAttackTab:CreateToggle({ Name = I.sword .. " Auto Attack Aura", CurrentValue = false, Flag = "AutoAttackBoxes", Callback = function(v) State.autoAttackBoxes = v end })
+AutoAttackTab:CreateDropdown({
+    Name = I.target .. " Prioridade",
+    Options = { "Nearest", "Small Boxes", "Best Boxes", "Low Health" },
+    CurrentOption = { "Nearest" },
+    MultipleOptions = false,
+    Flag = "AutoAttackPriority",
+    Callback = function(opt)
+        autoAttackPriority = opt[1]
+    end,
+})
 AutoAttackTab:CreateInput({ Name = I.clock .. " Delay", PlaceholderText = "Padrao: 0.05", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0.01 then autoAttackDelay = n end end })
+AutoAttackTab:CreateToggle({ Name = I.bolt .. " Delay Adaptativo", CurrentValue = true, Flag = "AutoAttackAdaptive", Callback = function(v) State.autoAttackAdaptive = v end })
+AutoAttackTab:CreateToggle({ Name = I.shield .. " Somente Field Valido", CurrentValue = true, Flag = "AutoAttackOnlyInField", Callback = function(v) State.autoAttackOnlyInField = v end })
 
 AreaFarmTab:CreateSection(I.map .. " Area Farm")
+AreaFarmTab:CreateDropdown({
+    Name = I.map .. " Areas carregadas",
+    Options = getLoadedAreaOptions(),
+    CurrentOption = { getLoadedAreaOptions()[1] },
+    MultipleOptions = false,
+    Flag = "LoadedAreaDropdown",
+    Callback = function(opt)
+        local n = parseAreaOption(opt[1])
+        if n then
+            farmAreaIndex = n
+            if autoFarmArea then startFarmAreaRoute() end
+        end
+    end,
+})
 AreaFarmTab:CreateInput({ Name = I.map .. " Numero da Area", PlaceholderText = "Ex: 1", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n then farmAreaIndex = math.floor(n) if autoFarmArea then startFarmAreaRoute() end end end })
 AreaFarmTab:CreateInput({ Name = "Raio", PlaceholderText = "Padrao: 90", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 20 then farmAreaRadius = n refreshFarmRoute() end end })
 AreaFarmTab:CreateInput({ Name = "Espacamento", PlaceholderText = "Padrao: 28", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 8 then farmAreaStep = n refreshFarmRoute() end end })
 AreaFarmTab:CreateToggle({ Name = I.bolt .. " Auto Farm Area + Attack", CurrentValue = false, Flag = "AutoFarmArea", Callback = function(v) autoFarmArea = v if v then startFarmAreaRoute() else stopFarmAreaRoute() end end })
+AreaFarmTab:CreateButton({ Name = I.target .. " Recenter Route", Callback = recenterFarmRoute })
 AreaFarmTab:CreateButton({ Name = I.door .. " Ir para Area", Callback = function() local center = getModelCenter(getAreaModel(farmAreaIndex)) if center then local char = player.Character or player.CharacterAdded:Wait() char:WaitForChild("HumanoidRootPart").CFrame = CFrame.new(center + Vector3.new(0, 4, 0)) end end })
 AreaFarmTab:CreateSection(I.star .. " Auto Farm Index")
+AreaFarmTab:CreateInput({ Name = I.warn .. " Pular Areas do Index", PlaceholderText = "Ex: 3, 7, 12", RemoveTextAfterFocusLost = false, Callback = parseSkippedAreas })
+AreaFarmTab:CreateToggle({ Name = I.sell .. " Auto Sell durante Index", CurrentValue = true, Flag = "AutoSellDuringIndex", Callback = function(v) State.autoSellDuringIndex = v end })
+AreaFarmTab:CreateToggle({ Name = I.link .. " Webhook do Auto Index", CurrentValue = true, Flag = "AutoIndexWebhook", Callback = function(v) State.autoIndexWebhook = v end })
 AreaFarmTab:CreateInput({
     Name = I.map .. " Max Area do Index",
     PlaceholderText = "0 = areas desbloqueadas",
@@ -2249,6 +3259,12 @@ AreaFarmTab:CreateButton({
     end,
 })
 AreaFarmTab:CreateButton({
+    Name = I.list .. " Hats faltando na Area Atual",
+    Callback = function()
+        notify(I.hat .. " Missing Hats", getIndexMissingText(farmAreaIndex, 12), 8)
+    end,
+})
+AreaFarmTab:CreateButton({
     Name = I.warn .. " Debug Area Atual",
     Callback = function()
         local char = player.Character
@@ -2278,6 +3294,21 @@ DungeonTab:CreateToggle({ Name = I.shield .. " No Pillars Giant Gift", CurrentVa
 DungeonTab:CreateButton({ Name = I.door .. " Entrar Dungeon Agora", Callback = joinDungeonQueue })
 DungeonTab:CreateButton({ Name = I.fast .. " Skip Queue Agora", Callback = skipDungeonQueue })
 DungeonTab:CreateButton({ Name = I.gift .. " Claim Results Agora", Callback = claimDungeonResults })
+DungeonTab:CreateButton({
+    Name = I.warn .. " Reset Dungeon State",
+    Callback = function()
+        currentDungeonId = nil
+        currentDungeonState = "Idle"
+        dungeonVisitedDoors = {}
+        dungeonNoBoxSince = nil
+        dungeonBossLocked = false
+        dungeonLastAdvanceDirection = nil
+        dungeonLastTargetPos = nil
+        dungeonRoomLockUntil = 0
+        dungeonFirstTeleportAt = 0
+        notify(I.warn .. " Dungeon", "Estado da dungeon resetado.", 3)
+    end,
+})
 DungeonTab:CreateSection(I.star .. " Perk Teams")
 DungeonTab:CreateToggle({ Name = I.star .. " Auto Swap Rooms/Boss", CurrentValue = true, Flag = "AutoDungeonTeamSwap", Callback = function(v) State.autoDungeonTeamSwap = v end })
 DungeonTab:CreateInput({ Name = I.star .. " Equipe Rooms", PlaceholderText = "Padrao: 1", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then dungeonRoomPerkTeam = math.floor(n) end end })
@@ -2297,7 +3328,7 @@ WebhookTab:CreateSection(I.link .. " Discord Webhook")
 WebhookTab:CreateInput({ Name = I.link .. " Webhook URL", PlaceholderText = "Cole o webhook aqui", RemoveTextAfterFocusLost = false, Callback = function(text) webhookUrl = tostring(text or "") end })
 WebhookTab:CreateInput({ Name = I.clock .. " Tempo em minutos", PlaceholderText = "Padrao: 60", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then webhookDelayMinutes = n end end })
 WebhookTab:CreateToggle({ Name = I.link .. " Ativar Webhook Automatico", CurrentValue = false, Flag = "WebhookEnabled", Callback = function(v) State.webhookEnabled = v lastWebhookAt = os.clock() end })
-WebhookTab:CreateButton({ Name = I.bolt .. " Test Webhook", Callback = function() sendWebhook("Teste do Unboxing Hub - Player: " .. tostring(player.Name), false) notify(I.link .. " Webhook", "Teste enviado.", 2) end })
+WebhookTab:CreateButton({ Name = I.bolt .. " Test Webhook", Callback = function() sendWebhook(buildWebhookTest(), false) notify(I.link .. " Webhook", "Teste enviado.", 2) end })
 WebhookTab:CreateButton({ Name = I.chart .. " Enviar Relatorio Agora", Callback = function() sendWebhook(buildWebhookReport(), false) notify(I.link .. " Webhook", "Relatorio enviado.", 2) end })
 
 StatsTab:CreateSection(I.chart .. " Stats")
@@ -2346,17 +3377,24 @@ OtherTab:CreateSection(I.gear .. " Other")
 OtherTab:CreateInput({ Name = I.save .. " Nome do Save", PlaceholderText = "Ex: Save1", RemoveTextAfterFocusLost = false, Callback = function(text) if text and text ~= "" then saveName = tostring(text) end end })
 OtherTab:CreateButton({ Name = I.save .. " Save", Callback = saveConfig })
 OtherTab:CreateButton({ Name = I.save .. " Carregar Save", Callback = loadConfig })
+OtherTab:CreateButton({ Name = I.warn .. " Reset Config Atual", Callback = function() stopAllSystems(true) notify(I.warn .. " Reset", "Config ativa desligada. Save no arquivo nao foi apagado.", 3) end })
 OtherTab:CreateButton({ Name = I.turtle .. " TurtleSpy", Callback = function() pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/Turtle-Brand/Turtle-Spy/main/source.lua", true))() end) end })
 OtherTab:CreateButton({ Name = I.clock .. " Anti Afk", Callback = function() pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() end) end })
 OtherTab:CreateButton({ Name = I.crown .. " Copy Discord", Callback = function() setclipboard("https://discord.gg/myjsXgDEC3") notify(I.check .. " Discord", "Copiado.", 2) end })
 
 task.spawn(function()
     while task.wait(autoAttackDelay) do
-        if State.autoAttackBoxes then
-            pcall(function()
+        if not State.paused and State.autoAttackBoxes then
+            safeRun("AutoAttack", function()
+                if os.clock() - lastTeleportAt < 0.4 then return end
+
                 local box = getNearestBox()
                 if box and box.Field and box.Field.Id and box.Id then
-                    RE.AttackBox:FireServer(box.Field.Id, box.Id, Clock and Clock.now() or os.clock())
+                    lastAttackHadTargetAt = os.clock()
+                    attacksThisSecond = attacksThisSecond + 1
+                    safeFire("AutoAttack", RE:FindFirstChild("AttackBox"), "AttackBox", 0.01, box.Field.Id, box.Id, Clock and Clock.now() or os.clock())
+                elseif State.autoAttackAdaptive then
+                    task.wait(0.15)
                 end
             end)
         end
@@ -2365,19 +3403,33 @@ end)
 
 task.spawn(function()
     while task.wait(autoSellDelay) do
-        protectSpecialItems()
-        if State.autoSellHats then pcall(function() sellInventoryCategory("Hats") end) end
-        if State.autoSellPets then pcall(function() sellInventoryCategory("Pets") end) end
-        if State.autoSellPerks then pcall(function() sellInventoryCategory("Perks") end) end
+        if not State.paused then
+            protectSpecialItems()
+            if State.autoSellHats then safeRun("AutoSell Hats", function() sellInventoryCategory("Hats") end) end
+            if State.autoSellPets then safeRun("AutoSell Pets", function() sellInventoryCategory("Pets") end) end
+            if State.autoSellPerks then safeRun("AutoSell Perks", function() sellInventoryCategory("Perks") end) end
+        end
     end
 end)
 
 task.spawn(function()
     while task.wait(autoCrateDelay) do
-        for crateId, enabled in pairs(autoCrates) do
-            if enabled then
-                openCrateAndTrack(crateId, crateAmount)
-                task.wait(0.15)
+        if not State.paused then
+            local selling = State.autoSellHats or State.autoSellPets or State.autoSellPerks
+            local timeExpired = crateStopAt > 0 and os.clock() >= crateStopAt
+            local limitReached = crateOpenLimit > 0 and Stats.cratesOpened >= crateOpenLimit
+
+            if timeExpired or limitReached then
+                for crateId in pairs(autoCrates) do autoCrates[crateId] = false end
+                notify(I.stop .. " Crates", "Auto crates parou pelo limite configurado.", 3)
+            elseif not selling then
+                for crateId, enabled in pairs(autoCrates) do
+                    if enabled then
+                        protectSpecialItems()
+                        openCrateAndTrack(crateId, crateAmount)
+                        task.wait(0.15)
+                    end
+                end
             end
         end
     end
@@ -2385,23 +3437,27 @@ end)
 
 task.spawn(function()
     while task.wait(merchantDelay) do
-        if State.autoEasterCrate then buyMerchant("Easter2024Crate") end
-        if State.autoBasicPerkCrate then buyMerchant("BasicPerkCrate") end
-        if State.autoHatDropBoost then buyMerchant("HatDropBoost") end
-        if State.autoComumEventPotion then buyMerchant("ComumEventPotion") end
-        if State.autoRareEventPotion then buyMerchant("RareEventPotion") end
-        if State.autoEpicEventPotion then buyMerchant("EpicEventPotion") end
-        if State.autoLegendaryEventPotion then buyMerchant("LegendaryEventPotion") end
-        if State.autoGodlyEventPotion then buyMerchant("GodlyEventPotion") end
-        if State.autoMythicEventPotion then buyMerchant("MythicEventPotion") end
-        if State.autoMoleBoost then buyMerchant("MoleBoost") end
-        if State.autoEventBooster then buyMerchant("EventBooster") end
+        if not State.paused then
+            currentMerchantState = "Idle"
+            if State.autoEasterCrate then buyMerchant("Easter2024Crate") end
+            if State.autoBasicPerkCrate then buyMerchant("BasicPerkCrate") end
+            if State.autoHatDropBoost then buyMerchant("HatDropBoost") end
+            if State.autoComumEventPotion then buyMerchant("ComumEventPotion") end
+            if State.autoRareEventPotion then buyMerchant("RareEventPotion") end
+            if State.autoEpicEventPotion then buyMerchant("EpicEventPotion") end
+            if State.autoLegendaryEventPotion then buyMerchant("LegendaryEventPotion") end
+            if State.autoGodlyEventPotion then buyMerchant("GodlyEventPotion") end
+            if State.autoMythicEventPotion then buyMerchant("MythicEventPotion") end
+            if State.autoMoleBoost then buyMerchant("MoleBoost") end
+            if State.autoEventBooster then buyMerchant("EventBooster") end
+            for _, itemId in ipairs(customMerchantItems) do buyMerchant(itemId) task.wait(0.05) end
+        end
     end
 end)
 
 task.spawn(function()
     while task.wait(0.03) do
-        if State.autoWheel and os.clock() - lastWheelTick >= wheelDelay then
+        if not State.paused and State.autoWheel and os.clock() - lastWheelTick >= wheelDelay then
             lastWheelTick = os.clock()
             for _ = 1, wheelBurst do task.spawn(spinSelectedWheel) end
         end
@@ -2410,11 +3466,12 @@ end)
 
 task.spawn(function()
     while task.wait(0.5) do
-        if State.autoDungeon and os.clock() - lastDungeonAction >= autoDungeonDelay then
+        if not State.paused and State.autoDungeon and os.clock() - lastDungeonAction >= autoDungeonDelay then
             lastDungeonAction = os.clock()
 
             local dungeonId = player:GetAttribute("DungeonId")
             if dungeonId then
+                currentDungeonState = "Room"
                 if tostring(dungeonId) ~= tostring(currentDungeonId) then
                     currentDungeonId = dungeonId
                     dungeonVisitedDoors = {}
@@ -2434,6 +3491,7 @@ task.spawn(function()
                 pcall(function() RE.ClaimDungeonQuest:FireServer() end)
                 pcall(dungeonMoveAssist)
             else
+                currentDungeonState = "Queue"
                 currentDungeonId = nil
                 dungeonCurrentPerkTeamMode = nil
                 dungeonBossLocked = false
@@ -2463,12 +3521,12 @@ end)
 
 task.spawn(function()
     while task.wait(1) do
-        if State.autoCollectTreasure and os.clock() - lastTreasureAt >= 12 then
+        if not State.paused and State.autoCollectTreasure and os.clock() - lastTreasureAt >= 12 then
             lastTreasureAt = os.clock()
             collectAllTreasures()
         end
 
-        if State.autoClaimChest and os.clock() - lastChestAt >= 20 then
+        if not State.paused and State.autoClaimChest and os.clock() - lastChestAt >= 20 then
             lastChestAt = os.clock()
             collectAllChests(true)
         end
@@ -2477,16 +3535,42 @@ end)
 
 task.spawn(function()
     while task.wait(1) do
-        if State.autoFarmIndex and os.clock() - lastAutoFarmIndexCheck >= autoFarmIndexCheckDelay then
+        if not State.paused and State.autoFarmIndex and os.clock() - lastAutoFarmIndexCheck >= autoFarmIndexCheckDelay then
             lastAutoFarmIndexCheck = os.clock()
             checkAutoFarmIndex()
+
+            if State.autoSellDuringIndex then
+                protectSpecialItems()
+                if State.autoSellHats then sellInventoryCategory("Hats") end
+                if State.autoSellPets then sellInventoryCategory("Pets") end
+                if State.autoSellPerks then sellInventoryCategory("Perks") end
+            end
         end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(1) do
+        updateBoxesPerMinute()
+        if not State.paused and currentCoreState ~= "Stopped" and currentCoreState ~= "Panic" then
+            currentCoreState = hasAnyAutomation() and "Running" or "Ready"
+        end
+
+        if State.autoAttackBoxes and os.clock() - lastAttackHadTargetAt >= 30 and os.clock() - lastAttackWarningAt >= 30 then
+            lastAttackWarningAt = os.clock()
+            logError("AutoAttack", "Nenhuma box alvo detectada nos ultimos 30s.")
+        end
+
+        updateOverlay()
     end
 end)
 
 task.spawn(function()
     while task.wait(0.5) do
         local now = os.clock()
+        if State.paused then
+            currentCoreState = "Paused"
+        else
 
         if State.autoClose and now - lastCloseAt >= 2 then
             lastCloseAt = now
@@ -2546,6 +3630,7 @@ task.spawn(function()
             if State.autoAch then pcall(function() RE.ClaimAllAchievements:FireServer() end) end
             if State.autoClaimDamageQuest then claimDamageQuest() end
             if State.autoBoxPassClaimAll then claimAllBoxPassRewards(true) end
+        end
         end
     end
 end)
