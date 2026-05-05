@@ -165,6 +165,7 @@ local selectedDungeonDifficulty = "Easy"
 local autoDungeonDelay = 2
 local lastDungeonAction = 0
 local lastDungeonAdvanceAt = 0
+local lastDungeonJoinAt = 0
 local dungeonNoBoxSince = nil
 local dungeonVisitedDoors = {}
 local dungeonRoomPerkTeam = 1
@@ -1391,7 +1392,7 @@ local function isInCurrentDungeon(inst)
         current = current.Parent
     end
 
-    return false
+    return true
 end
 
 local function textHasGiantGift(value)
@@ -1525,8 +1526,13 @@ local function dungeonMoveAssist()
     end
 
     if nearestDoor and nearestDoorCf then
-        local side = (root.Position - nearestDoorCf.Position):Dot(nearestDoorCf.LookVector)
-        local direction = side >= 0 and -nearestDoorCf.LookVector or nearestDoorCf.LookVector
+        local toDoor = nearestDoorCf.Position - root.Position
+        local direction
+        if toDoor.Magnitude > 1 then
+            direction = toDoor.Unit
+        else
+            direction = dungeonLastAdvanceDirection or nearestDoorCf.LookVector
+        end
         local target = nearestDoorCf.Position + direction * 30 + Vector3.new(0, 3, 0)
 
         humanoid:MoveTo(target)
@@ -2170,7 +2176,10 @@ task.spawn(function()
                 dungeonLastAdvanceDirection = nil
                 dungeonLastTargetPos = nil
                 dungeonRoomLockUntil = 0
-                joinDungeonQueue()
+                if lastDungeonJoinAt == 0 or os.clock() - lastDungeonJoinAt >= 10 then
+                    lastDungeonJoinAt = os.clock()
+                    joinDungeonQueue()
+                end
                 task.wait(0.25)
                 skipDungeonQueue()
             end
