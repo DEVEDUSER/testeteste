@@ -19,7 +19,22 @@ do
         Rayfield = result
     else
         warn("Falha ao carregar Rayfield:", result)
-        return
+        Rayfield = {
+            Notify = function() end,
+            CreateWindow = function()
+                return {
+                    CreateTab = function()
+                        return {
+                            CreateSection = function() end,
+                            CreateToggle = function() end,
+                            CreateButton = function() end,
+                            CreateInput = function() end,
+                            CreateDropdown = function() end,
+                        }
+                    end,
+                }
+            end,
+        }
     end
 end
 
@@ -78,10 +93,9 @@ pcall(function()
     EggHuntData = require(ReplicatedStorage.Shared.GameData.EggHuntData)
 end)
 
-local function icon(...)
-    local args = { ... }
+local function icon(code)
     local ok, value = pcall(function()
-        return utf8 and utf8.char(unpack(args))
+        return utf8 and utf8.char(code)
     end)
     return ok and value or ""
 end
@@ -395,8 +409,8 @@ local function protectTab(tab, label)
         local rawMethod = tab[methodName]
 
         if type(rawMethod) == "function" then
-            tab[methodName] = function(self, ...)
-                local ok, result = pcall(rawMethod, self, ...)
+            tab[methodName] = function(self, a, b, c, d, e)
+                local ok, result = pcall(rawMethod, self, a, b, c, d, e)
                 if not ok then
                     warn("UnboxingHub UI falhou em " .. tostring(label) .. ":" .. methodName, result)
                 end
@@ -540,7 +554,7 @@ local function recordRemote(name, ok, result)
     RemoteStats[name] = info
 end
 
-local function safeFire(systemName, remote, remoteName, cooldown, ...)
+local function safeFire(systemName, remote, remoteName, cooldown, a1, a2, a3, a4, a5, a6)
     if not remote then
         logError(systemName, tostring(remoteName) .. " nao encontrado.")
         return false
@@ -549,16 +563,15 @@ local function safeFire(systemName, remote, remoteName, cooldown, ...)
     local key = tostring(systemName) .. ":" .. tostring(remoteName)
     if cooldown and cooldown > 0 and not canUseCooldown(key, cooldown) then return false end
 
-    local args = { ... }
     local ok, result = pcall(function()
-        remote:FireServer(unpack(args))
+        remote:FireServer(a1, a2, a3, a4, a5, a6)
     end)
 
     recordRemote(remoteName or systemName, ok, result)
     return ok, result
 end
 
-local function safeInvoke(systemName, remote, remoteName, cooldown, ...)
+local function safeInvoke(systemName, remote, remoteName, cooldown, a1, a2, a3, a4, a5, a6)
     if not remote then
         logError(systemName, tostring(remoteName) .. " nao encontrado.")
         return false
@@ -567,9 +580,8 @@ local function safeInvoke(systemName, remote, remoteName, cooldown, ...)
     local key = tostring(systemName) .. ":" .. tostring(remoteName)
     if cooldown and cooldown > 0 and not canUseCooldown(key, cooldown) then return false end
 
-    local args = { ... }
     local ok, result = pcall(function()
-        return remote:InvokeServer(unpack(args))
+        return remote:InvokeServer(a1, a2, a3, a4, a5, a6)
     end)
 
     recordRemote(remoteName or systemName, ok, result)
@@ -1225,7 +1237,7 @@ local function getBoxScore(box, rootPos)
 
     if priority == "Small Boxes" then
         local sizeValue = 5
-        if typeof(box.Size) == "Vector3" then
+        if type(box.Size) == "userdata" then
             sizeValue = box.Size.Magnitude
         elseif type(box.Size) == "number" then
             sizeValue = box.Size
@@ -2734,7 +2746,7 @@ function buildPrettyWebhook(title, description, color, fields)
                 description = tostring(description),
                 color = color or 0xF5B342,
                 timestamp = getWebhookTimestamp(),
-                x_footer = {
+                footer = {
                     text = "Unboxing Hub • " .. tostring(player.Name),
                 },
                 fields = fields or {},
