@@ -623,6 +623,30 @@ local function getAreaModel(index)
     return areas:FindFirstChild(tostring(index))
 end
 
+local function isAreaLoadedInCurrentWorld(index)
+    local areas = workspace:FindFirstChild("Areas")
+    local wanted = tonumber(index)
+    if not areas or not wanted then return false end
+
+    local hasIndexedAreas = false
+
+    for _, area in ipairs(areas:GetChildren()) do
+        local areaIndex = getAreaIndexFromModel(area)
+        if areaIndex then
+            hasIndexedAreas = true
+            if areaIndex == wanted then
+                return true
+            end
+        end
+    end
+
+    if hasIndexedAreas then
+        return false
+    end
+
+    return getAreaModel(wanted) ~= nil
+end
+
 local function getInstancePathText(inst, limit)
     local names = {}
     local current = inst
@@ -977,9 +1001,11 @@ local function findNextIncompleteIndexArea()
     if released > 0 then maxArea = math.min(maxArea, released) end
 
     for i = 1, maxArea do
-        local info = getAreaIndexInfo(i)
-        if info and info.Total > 0 and info.Missing > 0 then
-            return info
+        if isAreaLoadedInCurrentWorld(i) then
+            local info = getAreaIndexInfo(i)
+            if info and info.Total > 0 and info.Missing > 0 then
+                return info
+            end
         end
     end
 
