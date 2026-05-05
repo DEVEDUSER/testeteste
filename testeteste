@@ -177,6 +177,7 @@ local currentDungeonId = nil
 local dungeonLastAdvanceDirection = nil
 local dungeonLastTargetPos = nil
 local dungeonRoomLockUntil = 0
+local dungeonFirstTeleportAt = 0
 local lastGiantGiftPillarCleanupAt = 0
 
 local webhookUrl = ""
@@ -1457,6 +1458,10 @@ local function disableGiantGiftPillars()
     end
 end
 
+local function canDungeonTeleport()
+    return dungeonFirstTeleportAt == 0 or os.clock() >= dungeonFirstTeleportAt
+end
+
 local function dungeonMoveAssist()
     disableGiantGiftPillars()
 
@@ -1537,7 +1542,7 @@ local function dungeonMoveAssist()
 
         humanoid:MoveTo(target)
 
-        if os.clock() - lastDungeonAdvanceAt >= 3 then
+        if canDungeonTeleport() and os.clock() - lastDungeonAdvanceAt >= 3 then
             lastDungeonAdvanceAt = os.clock()
             dungeonVisitedDoors[nearestDoor] = os.clock()
             dungeonLastAdvanceDirection = direction
@@ -1572,7 +1577,7 @@ local function dungeonMoveAssist()
         local target = nearestRoomPart.Position + Vector3.new(0, 5, 0)
         humanoid:MoveTo(target)
 
-        if os.clock() - lastDungeonAdvanceAt >= 4 then
+        if canDungeonTeleport() and os.clock() - lastDungeonAdvanceAt >= 4 then
             lastDungeonAdvanceAt = os.clock()
             dungeonLastTargetPos = target
             root.CFrame = CFrame.new(target)
@@ -1765,6 +1770,7 @@ pcall(function()
         dungeonLastAdvanceDirection = nil
         dungeonLastTargetPos = nil
         dungeonRoomLockUntil = 0
+        dungeonFirstTeleportAt = 0
 
         pcall(function()
             if result and result.Slots then
@@ -2161,6 +2167,8 @@ task.spawn(function()
                     dungeonLastAdvanceDirection = nil
                     dungeonLastTargetPos = nil
                     dungeonRoomLockUntil = 0
+                    dungeonFirstTeleportAt = os.clock() + 12
+                    lastDungeonAdvanceAt = os.clock()
                     updateDungeonPerkTeam(true)
                 else
                     updateDungeonPerkTeam(false)
@@ -2176,6 +2184,7 @@ task.spawn(function()
                 dungeonLastAdvanceDirection = nil
                 dungeonLastTargetPos = nil
                 dungeonRoomLockUntil = 0
+                dungeonFirstTeleportAt = 0
                 if lastDungeonJoinAt == 0 or os.clock() - lastDungeonJoinAt >= 10 then
                     lastDungeonJoinAt = os.clock()
                     joinDungeonQueue()
