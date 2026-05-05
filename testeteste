@@ -159,7 +159,7 @@ end
 
 State = {
     paused = false,
-    overlayEnabled = true,
+    overlayEnabled = false,
 
     autoGoldRush = false,
     autoEasterRush = false,
@@ -183,18 +183,18 @@ State = {
     autoWheel = false,
     webhookEnabled = false,
     autoDungeon = false,
-    autoClaimDungeonResults = true,
-    autoDungeonTeamSwap = true,
-    noGiantGiftPillars = true,
+    autoClaimDungeonResults = false,
+    autoDungeonTeamSwap = false,
+    noGiantGiftPillars = false,
     autoCollectTreasure = false,
     autoClaimChest = false,
     autoFarmIndex = false,
-    autoSellDuringIndex = true,
-    autoIndexWebhook = true,
-    autoAttackAdaptive = true,
-    autoAttackOnlyInField = true,
+    autoSellDuringIndex = false,
+    autoIndexWebhook = false,
+    autoAttackAdaptive = false,
+    autoAttackOnlyInField = false,
     merchantSmartMode = false,
-    keepOnePerRarity = true,
+    keepOnePerRarity = false,
 
     autoEasterCrate = false,
     autoBasicPerkCrate = false,
@@ -244,8 +244,8 @@ webhookUrl = ""
 webhookDelayMinutes = 60
 lastWebhookAt = os.clock()
 
-autoFavoriteRareDrops = true
-autoFavoriteGoodPerks = true
+autoFavoriteRareDrops = false
+autoFavoriteGoodPerks = false
 perkFavoriteMinStat = 4.0
 perkFavoriteMinTotalStat = 0
 
@@ -323,6 +323,10 @@ overlayLabel = nil
 LastError = {}
 RemoteStats = {}
 Cooldowns = {}
+BoxCountedKeys = {}
+LastBoxStatScanAt = 0
+BoxStatScanDelay = 0.4
+LastBoxStatSource = "None"
 
 Stats = {
     startedAt = os.clock(),
@@ -356,9 +360,9 @@ Stats = {
 }
 
 sellRarities = {
-    Hats = { Common = true, Rare = true, Epic = false, Legendary = false, Godly = false, Mythic = false, Etherium = false, Celestial = false },
-    Pets = { Common = true, Rare = true, Epic = false, Legendary = false, Godly = false, Mythic = false, Etherium = false, Celestial = false },
-    Perks = { Common = true, Rare = true, Epic = false, Legendary = false, Godly = false, Mythic = false },
+    Hats = { Common = false, Rare = false, Epic = false, Legendary = false, Godly = false, Mythic = false, Etherium = false, Celestial = false },
+    Pets = { Common = false, Rare = false, Epic = false, Legendary = false, Godly = false, Mythic = false, Etherium = false, Celestial = false },
+    Perks = { Common = false, Rare = false, Epic = false, Legendary = false, Godly = false, Mythic = false },
 }
 
 rarityAliases = {
@@ -431,14 +435,14 @@ windowOk, Window = pcall(function()
     LoadingTitle = "Unboxing Hub",
     LoadingSubtitle = "by DrSkrr",
     ConfigurationSaving = {
-        Enabled = true,
+        Enabled = false,
         FolderName = "UnboxingHub",
         FileName = "Config",
     },
     Discord = {
-        Enabled = true,
+        Enabled = false,
         Invite = "myjsXgDEC3",
-        RememberJoins = true,
+        RememberJoins = false,
     },
     KeySystem = false,
 })
@@ -602,6 +606,109 @@ end
 function recordMerchant(itemId)
     Stats.merchantBought = Stats.merchantBought + 1
     Stats.merchantByName[itemId] = (Stats.merchantByName[itemId] or 0) + 1
+end
+
+function getBoxKeyFromIds(fieldId, boxId)
+    if fieldId == nil or boxId == nil then return nil end
+    return tostring(fieldId) .. ":" .. tostring(boxId)
+end
+
+function getBoxKey(box)
+    if not box then return nil end
+
+    local fieldId
+    pcall(function()
+        fieldId = box.Field and box.Field.Id
+    end)
+
+    return getBoxKeyFromIds(fieldId, box.Id or box.UniqueId or box.BoxId)
+end
+
+function recordBoxBroken(source, amount, key)
+    amount = tonumber(amount) or 1
+    if amount <= 0 then return false end
+
+    if key then
+        if BoxCountedKeys[key] then return false end
+        BoxCountedKeys[key] = true
+    end
+
+    Stats.boxesBroken = Stats.boxesBroken + amount
+    LastBoxStatSource = tostring(source or "Unknown")
+    return true
+end
+
+function inferBoxCount(value)
+    local valueType = type(value)
+
+    if valueType == "number" then
+        return math.max(math.floor(value), 0)
+    end
+
+    if valueType == "table" then
+        local count = #value
+        if count > 0 then return count end
+
+        for _ in pairs(value) do
+            count = count + 1
+        end
+
+        return count
+    end
+
+    local ok, bufferCount = pcall(function()
+        if buffer and buffer.len then
+            return math.floor(buffer.len(value) / 2)
+        end
+    end)
+
+    if ok and type(bufferCount) == "number" and bufferCount > 0 then
+        return bufferCount
+    end
+
+    return 0
+end
+
+function boxLooksFinished(box, damageOverride)
+    if not box then return false end
+
+    if box.IsOpen or box.IsDestroyed then return true end
+
+    local health = tonumber(box.Health)
+    local damage = tonumber(damageOverride or box.Damage)
+
+    if health and health > 0 and damage and damage >= health then
+        return true
+    end
+
+    return false
+end
+
+function checkBoxForStats(box, source, damageOverride)
+    if boxLooksFinished(box, damageOverride) then
+        return recordBoxBroken(source, 1, getBoxKey(box))
+    end
+
+    return false
+end
+
+function scanBoxControllerStats()
+    if not BoxController or os.clock() - LastBoxStatScanAt < BoxStatScanDelay then return end
+    LastBoxStatScanAt = os.clock()
+
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local ok, field = pcall(function()
+        return BoxController.GetCurrentField(root.Position)
+    end)
+
+    if not ok or not field then return end
+
+    for _, box in pairs(field.VisibleBoxes or field.Boxes or {}) do
+        checkBoxForStats(box, "BoxController")
+    end
 end
 
 function getCharacterParts()
@@ -930,6 +1037,8 @@ end
 
 function updateBoxesPerMinute()
     local now = os.clock()
+    scanBoxControllerStats()
+
     if now - lastBoxesPerMinuteAt >= 10 then
         local diff = Stats.boxesBroken - lastBoxesPerMinuteCount
         boxesPerMinute = math.floor(diff / math.max(now - lastBoxesPerMinuteAt, 1) * 60)
@@ -2803,7 +2912,7 @@ function buildWebhookReport()
             },
             {
                 name = I.box .. " Farm",
-                value = "**Boxes:** `" .. formatNumber(Stats.boxesBroken) .. "`\n**Boxes/min:** `" .. formatNumber(boxesPerMinute) .. "`\n**Crates abertas:** `" .. formatNumber(Stats.cratesOpened) .. "`",
+                value = "**Boxes:** `" .. formatNumber(Stats.boxesBroken) .. "`\n**Boxes/min:** `" .. formatNumber(boxesPerMinute) .. "`\n**Fonte:** `" .. tostring(LastBoxStatSource) .. "`\n**Crates abertas:** `" .. formatNumber(Stats.cratesOpened) .. "`",
                 inline = true,
             },
             {
@@ -2983,8 +3092,8 @@ function loadConfig()
     crateOpenLimit = data.crateOpenLimit or crateOpenLimit
     webhookUrl = data.webhookUrl or webhookUrl
     webhookDelayMinutes = data.webhookDelayMinutes or webhookDelayMinutes
-    autoFavoriteRareDrops = data.autoFavoriteRareDrops ~= false
-    autoFavoriteGoodPerks = data.autoFavoriteGoodPerks ~= false
+    autoFavoriteRareDrops = data.autoFavoriteRareDrops == true
+    autoFavoriteGoodPerks = data.autoFavoriteGoodPerks == true
     perkFavoriteMinStat = data.perkFavoriteMinStat or perkFavoriteMinStat
     perkFavoriteMinTotalStat = data.perkFavoriteMinTotalStat or perkFavoriteMinTotalStat
     if type(data.skippedIndexAreas) == "table" then skippedIndexAreas = data.skippedIndexAreas end
@@ -3006,13 +3115,78 @@ function loadConfig()
 end
 
 pcall(function()
-    RE.BoxesDestroyed.OnClientEvent:Connect(function(_, boxBuffer)
-        local count = 0
-        pcall(function()
-            count = math.floor(buffer.len(boxBuffer) / 2)
+    local remote = RE:FindFirstChild("BoxesDestroyed")
+    if remote then
+        remote.OnClientEvent:Connect(function(a, b, c, d, e)
+            local count = math.max(
+                inferBoxCount(a),
+                inferBoxCount(b),
+                inferBoxCount(c),
+                inferBoxCount(d),
+                inferBoxCount(e)
+            )
+
+            if count <= 0 then count = 1 end
+            recordBoxBroken("BoxesDestroyed", count)
         end)
-        Stats.boxesBroken = Stats.boxesBroken + count
-    end)
+    end
+end)
+
+pcall(function()
+    local remote = RE:FindFirstChild("BoxActive")
+    if remote then
+        remote.OnClientEvent:Connect(function(fieldId, boxId, damage)
+            local box
+            pcall(function()
+                box = BoxController and BoxController.GetBox and BoxController.GetBox(fieldId, boxId)
+            end)
+
+            if box then
+                checkBoxForStats(box, "BoxActive", damage)
+            else
+                local key = getBoxKeyFromIds(fieldId, boxId)
+                if tonumber(damage) and tonumber(damage) > 0 then
+                    LastBoxStatSource = "BoxActive"
+                end
+            end
+        end)
+    end
+end)
+
+pcall(function()
+    local remote = RE:FindFirstChild("BoxChange")
+    if remote then
+        remote.OnClientEvent:Connect(function(fieldId, boxId, data)
+            local box
+            pcall(function()
+                box = BoxController and BoxController.GetBox and BoxController.GetBox(fieldId, boxId)
+            end)
+
+            local finished = false
+            if type(data) == "table" then
+                finished = data.IsOpen == true or data.IsDestroyed == true
+
+                if not finished and tonumber(data.Health) and tonumber(data.Damage) then
+                    finished = tonumber(data.Damage) >= tonumber(data.Health)
+                end
+            end
+
+            if finished then
+                recordBoxBroken("BoxChange", 1, getBoxKeyFromIds(fieldId, boxId))
+            elseif box then
+                checkBoxForStats(box, "BoxChange")
+            end
+        end)
+    end
+end)
+
+pcall(function()
+    local remote = RE:FindFirstChild("UnknownBox")
+    if remote then
+        remote.OnClientEvent:Connect(function(fieldId, boxId)
+            recordBoxBroken("UnknownBox", 1, getBoxKeyFromIds(fieldId, boxId))
+        end)
+    end
 end)
 
 pcall(function()
@@ -3072,7 +3246,7 @@ DashboardTab:CreateButton({ Name = I.stop .. " Stop All", Callback = function() 
 DashboardTab:CreateButton({ Name = I.pause .. " Soft Stop / Resume", Callback = function() softStop() notify(I.pause .. " Soft Stop", State.paused and "Farm pausado sem resetar configs." or "Farm retomado.", 3) end })
 DashboardTab:CreateButton({ Name = I.warn .. " Panic Mode", Callback = function() panicMode() notify(I.warn .. " Panic", "Tudo desligado e personagem levado para posicao segura.", 4) end })
 DashboardTab:CreateButton({ Name = I.home .. " Salvar Posicao Segura", Callback = setSafePosition })
-DashboardTab:CreateToggle({ Name = I.eye .. " Overlay na Tela", CurrentValue = true, Flag = "OverlayEnabled", Callback = function(v) State.overlayEnabled = v updateOverlay() end })
+DashboardTab:CreateToggle({ Name = I.eye .. " Overlay na Tela", CurrentValue = false, Flag = "OverlayEnabled", Callback = function(v) State.overlayEnabled = v updateOverlay() end })
 DashboardTab:CreateButton({
     Name = I.chart .. " Mostrar Dashboard",
     Callback = function()
@@ -3245,12 +3419,12 @@ CratesTab:CreateButton({
 })
 
 AutoSellTab:CreateSection(I.shield .. " Protecao")
-AutoSellTab:CreateToggle({ Name = I.boom .. " Favoritar EggRain/BombRain", CurrentValue = true, Flag = "AutoFavoriteRareDrops", Callback = function(v) autoFavoriteRareDrops = v end })
-AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perks bons", CurrentValue = true, Flag = "AutoFavoriteGoodPerks", Callback = function(v) autoFavoriteGoodPerks = v end })
+AutoSellTab:CreateToggle({ Name = I.boom .. " Favoritar EggRain/BombRain", CurrentValue = false, Flag = "AutoFavoriteRareDrops", Callback = function(v) autoFavoriteRareDrops = v end })
+AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perks bons", CurrentValue = false, Flag = "AutoFavoriteGoodPerks", Callback = function(v) autoFavoriteGoodPerks = v end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Stat minimo do Perk", PlaceholderText = "Padrao: 4.0", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n then perkFavoriteMinStat = n end end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Soma minima dos Stats", PlaceholderText = "0 = desligado", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0 then perkFavoriteMinTotalStat = n end end })
 AutoSellTab:CreateInput({ Name = I.clock .. " Delay Auto Sell", PlaceholderText = "Padrao: 5", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then autoSellDelay = n end end })
-AutoSellTab:CreateToggle({ Name = I.shield .. " Manter 1 por raridade", CurrentValue = true, Flag = "KeepOnePerRarity", Callback = function(v) State.keepOnePerRarity = v end })
+AutoSellTab:CreateToggle({ Name = I.shield .. " Manter 1 por raridade", CurrentValue = false, Flag = "KeepOnePerRarity", Callback = function(v) State.keepOnePerRarity = v end })
 
 function rarityToggles(category, rarities, label)
     AutoSellTab:CreateSection(label)
@@ -3291,8 +3465,8 @@ AutoAttackTab:CreateDropdown({
     end,
 })
 AutoAttackTab:CreateInput({ Name = I.clock .. " Delay", PlaceholderText = "Padrao: 0.05", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0.01 then autoAttackDelay = n end end })
-AutoAttackTab:CreateToggle({ Name = I.bolt .. " Delay Adaptativo", CurrentValue = true, Flag = "AutoAttackAdaptive", Callback = function(v) State.autoAttackAdaptive = v end })
-AutoAttackTab:CreateToggle({ Name = I.shield .. " Somente Field Valido", CurrentValue = true, Flag = "AutoAttackOnlyInField", Callback = function(v) State.autoAttackOnlyInField = v end })
+AutoAttackTab:CreateToggle({ Name = I.bolt .. " Delay Adaptativo", CurrentValue = false, Flag = "AutoAttackAdaptive", Callback = function(v) State.autoAttackAdaptive = v end })
+AutoAttackTab:CreateToggle({ Name = I.shield .. " Somente Field Valido", CurrentValue = false, Flag = "AutoAttackOnlyInField", Callback = function(v) State.autoAttackOnlyInField = v end })
 
 AreaFarmTab:CreateSection(I.map .. " Area Farm")
 AreaFarmTab:CreateDropdown({
@@ -3317,8 +3491,8 @@ AreaFarmTab:CreateButton({ Name = I.target .. " Recenter Route", Callback = rece
 AreaFarmTab:CreateButton({ Name = I.door .. " Ir para Area", Callback = function() local center = getModelCenter(getAreaModel(farmAreaIndex)) if center then local char = player.Character or player.CharacterAdded:Wait() char:WaitForChild("HumanoidRootPart").CFrame = CFrame.new(center + Vector3.new(0, 4, 0)) end end })
 AreaFarmTab:CreateSection(I.star .. " Auto Farm Index")
 AreaFarmTab:CreateInput({ Name = I.warn .. " Pular Areas do Index", PlaceholderText = "Ex: 3, 7, 12", RemoveTextAfterFocusLost = false, Callback = parseSkippedAreas })
-AreaFarmTab:CreateToggle({ Name = I.sell .. " Auto Sell durante Index", CurrentValue = true, Flag = "AutoSellDuringIndex", Callback = function(v) State.autoSellDuringIndex = v end })
-AreaFarmTab:CreateToggle({ Name = I.link .. " Webhook do Auto Index", CurrentValue = true, Flag = "AutoIndexWebhook", Callback = function(v) State.autoIndexWebhook = v end })
+AreaFarmTab:CreateToggle({ Name = I.sell .. " Auto Sell durante Index", CurrentValue = false, Flag = "AutoSellDuringIndex", Callback = function(v) State.autoSellDuringIndex = v end })
+AreaFarmTab:CreateToggle({ Name = I.link .. " Webhook do Auto Index", CurrentValue = false, Flag = "AutoIndexWebhook", Callback = function(v) State.autoIndexWebhook = v end })
 AreaFarmTab:CreateInput({
     Name = I.map .. " Max Area do Index",
     PlaceholderText = "0 = areas desbloqueadas",
@@ -3395,8 +3569,8 @@ DungeonTab:CreateSection(I.map .. " Auto Dungeon")
 DungeonTab:CreateDropdown({ Name = I.globe .. " Mundo da Dungeon", Options = { "Auto", "World1", "World2", "World3", "World4", "World5", "World6", "World7", "World8", "World9", "World10", "Event" }, CurrentOption = { "Auto" }, MultipleOptions = false, Flag = "DungeonWorld", Callback = function(opt) selectedDungeonWorld = opt[1] end })
 DungeonTab:CreateDropdown({ Name = I.fire .. " Dificuldade", Options = { "Easy", "Medium", "Hard" }, CurrentOption = { "Easy" }, MultipleOptions = false, Flag = "DungeonDifficulty", Callback = function(opt) selectedDungeonDifficulty = opt[1] end })
 DungeonTab:CreateToggle({ Name = I.sword .. " Auto Dungeon", CurrentValue = false, Flag = "AutoDungeon", Callback = function(v) State.autoDungeon = v if v then State.autoAttackBoxes = true dungeonCurrentPerkTeamMode = nil updateDungeonPerkTeam(true) end end })
-DungeonTab:CreateToggle({ Name = I.gift .. " Auto Claim Dungeon Results", CurrentValue = true, Flag = "AutoClaimDungeonResults", Callback = function(v) State.autoClaimDungeonResults = v end })
-DungeonTab:CreateToggle({ Name = I.shield .. " No Pillars Giant Gift", CurrentValue = true, Flag = "NoGiantGiftPillars", Callback = function(v) State.noGiantGiftPillars = v end })
+DungeonTab:CreateToggle({ Name = I.gift .. " Auto Claim Dungeon Results", CurrentValue = false, Flag = "AutoClaimDungeonResults", Callback = function(v) State.autoClaimDungeonResults = v end })
+DungeonTab:CreateToggle({ Name = I.shield .. " No Pillars Giant Gift", CurrentValue = false, Flag = "NoGiantGiftPillars", Callback = function(v) State.noGiantGiftPillars = v end })
 DungeonTab:CreateButton({ Name = I.door .. " Entrar Dungeon Agora", Callback = joinDungeonQueue })
 DungeonTab:CreateButton({ Name = I.fast .. " Skip Queue Agora", Callback = skipDungeonQueue })
 DungeonTab:CreateButton({ Name = I.gift .. " Claim Results Agora", Callback = claimDungeonResults })
@@ -3416,7 +3590,7 @@ DungeonTab:CreateButton({
     end,
 })
 DungeonTab:CreateSection(I.star .. " Perk Teams")
-DungeonTab:CreateToggle({ Name = I.star .. " Auto Swap Rooms/Boss", CurrentValue = true, Flag = "AutoDungeonTeamSwap", Callback = function(v) State.autoDungeonTeamSwap = v end })
+DungeonTab:CreateToggle({ Name = I.star .. " Auto Swap Rooms/Boss", CurrentValue = false, Flag = "AutoDungeonTeamSwap", Callback = function(v) State.autoDungeonTeamSwap = v end })
 DungeonTab:CreateInput({ Name = I.star .. " Equipe Rooms", PlaceholderText = "Padrao: 1", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then dungeonRoomPerkTeam = math.floor(n) end end })
 DungeonTab:CreateInput({ Name = I.fire .. " Equipe Boss", PlaceholderText = "Padrao: 2", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then dungeonBossPerkTeam = math.floor(n) end end })
 DungeonTab:CreateButton({ Name = I.star .. " Equipe 1 Rooms Agora", Callback = function() equipPerkTeam(dungeonRoomPerkTeam, "Rooms", false) end })
@@ -3441,7 +3615,7 @@ StatsTab:CreateSection(I.chart .. " Stats")
 StatsTab:CreateButton({
     Name = I.chart .. " Mostrar Stats",
     Callback = function()
-        notify(I.chart .. " Sessao", "Tempo: " .. formatTime(os.clock() - Stats.startedAt) .. " | Boxes: " .. tostring(Stats.boxesBroken) .. " | Crates: " .. tostring(Stats.cratesOpened) .. " | Vendidos: " .. tostring(Stats.itemsSold) .. " | Index Area: " .. tostring(Stats.indexTargetArea), 7)
+        notify(I.chart .. " Sessao", "Tempo: " .. formatTime(os.clock() - Stats.startedAt) .. " | Boxes: " .. tostring(Stats.boxesBroken) .. " | Fonte: " .. tostring(LastBoxStatSource) .. " | Crates: " .. tostring(Stats.cratesOpened) .. " | Vendidos: " .. tostring(Stats.itemsSold) .. " | Index Area: " .. tostring(Stats.indexTargetArea), 7)
     end,
 })
 
@@ -3499,6 +3673,9 @@ task.spawn(function()
                     lastAttackHadTargetAt = os.clock()
                     attacksThisSecond = attacksThisSecond + 1
                     safeFire("AutoAttack", RE:FindFirstChild("AttackBox"), "AttackBox", 0.01, box.Field.Id, box.Id, Clock and Clock.now() or os.clock())
+                    task.delay(0.25, function()
+                        checkBoxForStats(box, "AutoAttack")
+                    end)
                 elseif State.autoAttackAdaptive then
                     task.wait(0.15)
                 end
