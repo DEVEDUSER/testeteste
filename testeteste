@@ -131,6 +131,7 @@ local State = {
     webhookEnabled = false,
     autoDungeon = false,
     autoClaimDungeonResults = true,
+    autoDungeonTeamSwap = true,
     autoCollectTreasure = false,
     autoFarmIndex = false,
 
@@ -161,6 +162,11 @@ local lastDungeonAction = 0
 local lastDungeonAdvanceAt = 0
 local dungeonNoBoxSince = nil
 local dungeonVisitedDoors = {}
+local dungeonRoomPerkTeam = 1
+local dungeonBossPerkTeam = 2
+local dungeonCurrentPerkTeamMode = nil
+local lastDungeonTeamSwapAt = 0
+local currentDungeonId = nil
 
 local webhookUrl = ""
 local webhookDelayMinutes = 60
@@ -1210,6 +1216,70 @@ local function claimDungeonResults()
     end)
 end
 
+local function equipPerkTeam(teamIndex, mode, silent)
+    teamIndex = tonumber(teamIndex)
+    if not teamIndex or teamIndex < 1 then return false end
+    teamIndex = math.floor(teamIndex)
+
+    local remote = RE:FindFirstChild("EquipTeam")
+    if not remote then
+        if not silent then notify(I.warn .. " Perk Team", "Remote EquipTeam nao encontrado.", 3) end
+        return false
+    end
+
+    local ok = pcall(function()
+        remote:FireServer("Perk", teamIndex)
+    end)
+
+    if ok then
+        dungeonCurrentPerkTeamMode = mode or dungeonCurrentPerkTeamMode
+        if not silent then
+            notify(I.star .. " Perk Team", "Equipe " .. tostring(teamIndex) .. " equipada.", 2)
+        end
+    end
+
+    return ok
+end
+
+local function isBossDungeonBox(box)
+    if not box then return false end
+
+    local texts = {}
+    local function add(value)
+        if value ~= nil then table.insert(texts, string.lower(tostring(value))) end
+    end
+
+    pcall(function() add(box.Id) end)
+    pcall(function() add(box.Name) end)
+    pcall(function() add(box.ModelId) end)
+    pcall(function() add(box.BoxId) end)
+    pcall(function() add(box.Type) end)
+    pcall(function() if box.Model then add(box.Model.Name) end end)
+    pcall(function() if box.Instance then add(box.Instance.Name) end end)
+
+    local text = table.concat(texts, " ")
+    return text:find("boss", 1, true) ~= nil or text:find("colossal", 1, true) ~= nil
+end
+
+local function updateDungeonPerkTeam(forceRooms)
+    if not State.autoDungeonTeamSwap then return end
+    if os.clock() - lastDungeonTeamSwapAt < 1.25 then return end
+
+    local mode = "Rooms"
+    if not forceRooms and isBossDungeonBox(getNearestBox()) then
+        mode = "Boss"
+    end
+
+    if dungeonCurrentPerkTeamMode == mode then return end
+
+    lastDungeonTeamSwapAt = os.clock()
+    if mode == "Boss" then
+        equipPerkTeam(dungeonBossPerkTeam, "Boss", false)
+    else
+        equipPerkTeam(dungeonRoomPerkTeam, "Rooms", false)
+    end
+end
+
 local function dungeonMoveAssist()
     local box = getNearestBox()
 
@@ -1436,6 +1506,8 @@ local function saveConfig()
         autoFarmIndexCheckDelay = autoFarmIndexCheckDelay,
         selectedDungeonWorld = selectedDungeonWorld,
         selectedDungeonDifficulty = selectedDungeonDifficulty,
+        dungeonRoomPerkTeam = dungeonRoomPerkTeam,
+        dungeonBossPerkTeam = dungeonBossPerkTeam,
     }
 
     writefile("UnboxingHub/Saves/" .. saveName .. ".json", HttpService:JSONEncode(data))
@@ -1490,6 +1562,8 @@ local function loadConfig()
     autoFarmIndexCheckDelay = data.autoFarmIndexCheckDelay or autoFarmIndexCheckDelay
     selectedDungeonWorld = data.selectedDungeonWorld or selectedDungeonWorld
     selectedDungeonDifficulty = data.selectedDungeonDifficulty or selectedDungeonDifficulty
+    dungeonRoomPerkTeam = data.dungeonRoomPerkTeam or dungeonRoomPerkTeam
+    dungeonBossPerkTeam = data.dungeonBossPerkTeam or dungeonBossPerkTeam
 
     notify(I.save .. " Save", "Carregou: " .. saveName, 3)
 end
@@ -1509,6 +1583,8 @@ pcall(function()
         Stats.dungeonsCompleted = Stats.dungeonsCompleted + 1
         dungeonVisitedDoors = {}
         dungeonNoBoxSince = nil
+        currentDungeonId = nil
+        dungeonCurrentPerkTeamMode = nil
 
         pcall(function()
             if result and result.Slots then
@@ -1752,11 +1828,17 @@ AreaFarmTab:CreateButton({
 DungeonTab:CreateSection(I.map .. " Auto Dungeon")
 DungeonTab:CreateDropdown({ Name = I.globe .. " Mundo da Dungeon", Options = { "Auto", "World1", "World2", "World3", "World4", "World5", "World6", "World7", "World8", "World9", "World10", "Event" }, CurrentOption = { "Auto" }, MultipleOptions = false, Flag = "DungeonWorld", Callback = function(opt) selectedDungeonWorld = opt[1] end })
 DungeonTab:CreateDropdown({ Name = I.fire .. " Dificuldade", Options = { "Easy", "Medium", "Hard" }, CurrentOption = { "Easy" }, MultipleOptions = false, Flag = "DungeonDifficulty", Callback = function(opt) selectedDungeonDifficulty = opt[1] end })
-DungeonTab:CreateToggle({ Name = I.sword .. " Auto Dungeon", CurrentValue = false, Flag = "AutoDungeon", Callback = function(v) State.autoDungeon = v if v then State.autoAttackBoxes = true end end })
+DungeonTab:CreateToggle({ Name = I.sword .. " Auto Dungeon", CurrentValue = false, Flag = "AutoDungeon", Callback = function(v) State.autoDungeon = v if v then State.autoAttackBoxes = true dungeonCurrentPerkTeamMode = nil updateDungeonPerkTeam(true) end end })
 DungeonTab:CreateToggle({ Name = I.gift .. " Auto Claim Dungeon Results", CurrentValue = true, Flag = "AutoClaimDungeonResults", Callback = function(v) State.autoClaimDungeonResults = v end })
 DungeonTab:CreateButton({ Name = I.door .. " Entrar Dungeon Agora", Callback = joinDungeonQueue })
 DungeonTab:CreateButton({ Name = I.fast .. " Skip Queue Agora", Callback = skipDungeonQueue })
 DungeonTab:CreateButton({ Name = I.gift .. " Claim Results Agora", Callback = claimDungeonResults })
+DungeonTab:CreateSection(I.star .. " Perk Teams")
+DungeonTab:CreateToggle({ Name = I.star .. " Auto Swap Rooms/Boss", CurrentValue = true, Flag = "AutoDungeonTeamSwap", Callback = function(v) State.autoDungeonTeamSwap = v end })
+DungeonTab:CreateInput({ Name = I.star .. " Equipe Rooms", PlaceholderText = "Padrao: 1", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then dungeonRoomPerkTeam = math.floor(n) end end })
+DungeonTab:CreateInput({ Name = I.fire .. " Equipe Boss", PlaceholderText = "Padrao: 2", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then dungeonBossPerkTeam = math.floor(n) end end })
+DungeonTab:CreateButton({ Name = I.star .. " Equipe 1 Rooms Agora", Callback = function() equipPerkTeam(dungeonRoomPerkTeam, "Rooms", false) end })
+DungeonTab:CreateButton({ Name = I.fire .. " Equipe 2 Boss Agora", Callback = function() equipPerkTeam(dungeonBossPerkTeam, "Boss", false) end })
 
 WheelTab:CreateSection(I.wheel .. " Wheel")
 WheelTab:CreateDropdown({ Name = I.wheel .. " Wheel", Options = { "Auto Detect", "Easter", "Default" }, CurrentOption = { "Auto Detect" }, MultipleOptions = false, Flag = "SelectedWheel", Callback = function(opt) selectedWheelId = opt[1] end })
@@ -1886,11 +1968,22 @@ task.spawn(function()
         if State.autoDungeon and os.clock() - lastDungeonAction >= autoDungeonDelay then
             lastDungeonAction = os.clock()
 
-            if player:GetAttribute("DungeonId") then
+            local dungeonId = player:GetAttribute("DungeonId")
+            if dungeonId then
+                if tostring(dungeonId) ~= tostring(currentDungeonId) then
+                    currentDungeonId = dungeonId
+                    dungeonCurrentPerkTeamMode = nil
+                    updateDungeonPerkTeam(true)
+                else
+                    updateDungeonPerkTeam(false)
+                end
+
                 State.autoAttackBoxes = true
                 pcall(function() RE.ClaimDungeonQuest:FireServer() end)
                 pcall(dungeonMoveAssist)
             else
+                currentDungeonId = nil
+                dungeonCurrentPerkTeamMode = nil
                 joinDungeonQueue()
                 task.wait(0.25)
                 skipDungeonQueue()
