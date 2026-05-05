@@ -38,6 +38,7 @@ end
 local ModulesFolder = ReplicatedStorage:FindFirstChild("Modules")
 local SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
 local ControllersFolder = ReplicatedStorage:FindFirstChild("Controllers")
+local SharedUtilFolder = SharedFolder and SharedFolder:FindFirstChild("Util")
 
 local PlayerData = safeRequire(ModulesFolder and ModulesFolder:FindFirstChild("PlayerData"))
 local ItemData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("ItemData"))
@@ -45,6 +46,8 @@ local Clock = safeRequire(SharedFolder and SharedFolder:FindFirstChild("Clock"))
 local StateUtil = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StateUtil"))
 local StatsModule = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StatsModule"))
 local AreaData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("AreaData"))
+local GameConfig = safeRequire(SharedFolder and SharedFolder:FindFirstChild("GameConfig"))
+local BattlePassUtil = safeRequire(SharedUtilFolder and SharedUtilFolder:FindFirstChild("BattlePassUtil"))
 local BoxController = safeRequire(ControllersFolder and ControllersFolder:FindFirstChild("BoxController"))
 
 local EggHuntData
@@ -119,6 +122,7 @@ local State = {
     autoAch = false,
     autoPerk = false,
     autoClaimDamageQuest = false,
+    autoBoxPassClaimAll = false,
 
     camLock = false,
     tpCamera = false,
@@ -165,6 +169,7 @@ local dungeonVisitedDoors = {}
 local dungeonRoomPerkTeam = 1
 local dungeonBossPerkTeam = 2
 local dungeonCurrentPerkTeamMode = nil
+local dungeonBossLocked = false
 local lastDungeonTeamSwapAt = 0
 local currentDungeonId = nil
 
@@ -1015,6 +1020,65 @@ local function claimDamageQuest()
     end)
 end
 
+local function getBattlePassStage(battlePass)
+    local experience = battlePass and battlePass.Experience or 0
+
+    if BattlePassUtil and BattlePassUtil.GetBattlePassStage then
+        local ok, stage = pcall(function()
+            return BattlePassUtil.GetBattlePassStage(experience)
+        end)
+        if ok and stage then return stage end
+    end
+
+    local config = GameConfig and GameConfig.BattlePass
+    local stageXp = config and config.StageXP or 1
+    local maxStage = config and config.MaxStage or 100
+    return math.min(math.floor(experience / stageXp), maxStage)
+end
+
+local function claimAllBoxPassRewards(silent)
+    local data = PlayerData and PlayerData.data
+    local battlePass = data and data.BattlePass
+    local remote = RF:FindFirstChild("ClaimBattlePass")
+
+    if not battlePass or not remote then
+        if not silent then notify(I.warn .. " Box Pass", "BattlePass ou ClaimBattlePass nao encontrado.", 3) end
+        return
+    end
+
+    local maxStage = getBattlePassStage(battlePass)
+    local tiers = battlePass.Tiers or {}
+    local tierList = { "Free" }
+
+    if battlePass.IsPremium or player.MembershipType == Enum.MembershipType.Premium then
+        table.insert(tierList, "Premium")
+    end
+
+    if battlePass.IsPaid then
+        table.insert(tierList, "Paid")
+    end
+
+    local claimed = 0
+    for stage = 1, maxStage do
+        for _, tier in ipairs(tierList) do
+            local tierData = tiers[tier] or {}
+            local key = ("Stage_%s"):format(stage)
+
+            if not tierData[key] then
+                pcall(function()
+                    remote:InvokeServer(tier, stage)
+                end)
+                claimed = claimed + 1
+                task.wait(0.04)
+            end
+        end
+    end
+
+    if not silent then
+        notify(I.gift .. " Box Pass", "Tentou coletar " .. tostring(claimed) .. " rewards.", 3)
+    end
+end
+
 local function collectAllEggHuntEggs()
     local char = player.Character or player.CharacterAdded:Wait()
     local root = char:FindFirstChild("HumanoidRootPart")
@@ -1263,11 +1327,14 @@ end
 
 local function updateDungeonPerkTeam(forceRooms)
     if not State.autoDungeonTeamSwap then return end
-    if os.clock() - lastDungeonTeamSwapAt < 1.25 then return end
+    if not forceRooms and os.clock() - lastDungeonTeamSwapAt < 1.25 then return end
 
     local mode = "Rooms"
-    if not forceRooms and isBossDungeonBox(getNearestBox()) then
+    if forceRooms then
+        dungeonBossLocked = false
+    elseif dungeonBossLocked or isBossDungeonBox(getNearestBox()) then
         mode = "Boss"
+        dungeonBossLocked = true
     end
 
     if dungeonCurrentPerkTeamMode == mode then return end
@@ -1585,6 +1652,7 @@ pcall(function()
         dungeonNoBoxSince = nil
         currentDungeonId = nil
         dungeonCurrentPerkTeamMode = nil
+        dungeonBossLocked = false
 
         pcall(function()
             if result and result.Slots then
@@ -1676,6 +1744,8 @@ RewardsTab:CreateToggle({ Name = I.sword .. " Battle Pass", CurrentValue = false
 RewardsTab:CreateToggle({ Name = I.calendar .. " Daily Login", CurrentValue = false, Flag = "DailyLogin", Callback = function(v) State.autoDaily = v end })
 RewardsTab:CreateToggle({ Name = I.medal .. " Achievements", CurrentValue = false, Flag = "Achievements", Callback = function(v) State.autoAch = v end })
 RewardsTab:CreateToggle({ Name = I.quest .. " ClaimDamegeQuest", CurrentValue = false, Flag = "ClaimDamageQuest", Callback = function(v) State.autoClaimDamageQuest = v end })
+RewardsTab:CreateToggle({ Name = I.gift .. " Auto Claim All Box Pass", CurrentValue = false, Flag = "AutoBoxPassClaimAll", Callback = function(v) State.autoBoxPassClaimAll = v end })
+RewardsTab:CreateButton({ Name = I.gift .. " Claim All Box Pass Agora", Callback = function() claimAllBoxPassRewards(false) end })
 
 CratesTab:CreateSection(I.box .. " Crates")
 CratesTab:CreateInput({ Name = I.box .. " Quantidade", PlaceholderText = "Ex: 10", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) crateAmount = n and n > 0 and n or 1 end })
@@ -1973,6 +2043,7 @@ task.spawn(function()
                 if tostring(dungeonId) ~= tostring(currentDungeonId) then
                     currentDungeonId = dungeonId
                     dungeonCurrentPerkTeamMode = nil
+                    dungeonBossLocked = false
                     updateDungeonPerkTeam(true)
                 else
                     updateDungeonPerkTeam(false)
@@ -1984,6 +2055,7 @@ task.spawn(function()
             else
                 currentDungeonId = nil
                 dungeonCurrentPerkTeamMode = nil
+                dungeonBossLocked = false
                 joinDungeonQueue()
                 task.wait(0.25)
                 skipDungeonQueue()
@@ -2080,6 +2152,7 @@ task.spawn(function()
             if State.autoDaily then pcall(function() RE.ClaimLoginReward:FireServer() end) end
             if State.autoAch then pcall(function() RE.ClaimAllAchievements:FireServer() end) end
             if State.autoClaimDamageQuest then claimDamageQuest() end
+            if State.autoBoxPassClaimAll then claimAllBoxPassRewards(true) end
         end
     end
 end)
