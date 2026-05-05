@@ -136,6 +136,7 @@ local State = {
     autoDungeon = false,
     autoClaimDungeonResults = true,
     autoDungeonTeamSwap = true,
+    noGiantGiftPillars = true,
     autoCollectTreasure = false,
     autoFarmIndex = false,
 
@@ -172,6 +173,10 @@ local dungeonCurrentPerkTeamMode = nil
 local dungeonBossLocked = false
 local lastDungeonTeamSwapAt = 0
 local currentDungeonId = nil
+local dungeonLastAdvanceDirection = nil
+local dungeonLastTargetPos = nil
+local dungeonRoomLockUntil = 0
+local lastGiantGiftPillarCleanupAt = 0
 
 local webhookUrl = ""
 local webhookDelayMinutes = 60
@@ -1347,7 +1352,113 @@ local function updateDungeonPerkTeam(forceRooms)
     end
 end
 
+local function getCurrentDungeonRoot()
+    local dungeonId = player:GetAttribute("DungeonId")
+    if not dungeonId then return nil end
+
+    local dungeons = workspace:FindFirstChild("Dungeons")
+    local dungeonRoot = dungeons and dungeons:FindFirstChild(tostring(dungeonId))
+    if dungeonRoot then return dungeonRoot end
+
+    return nil
+end
+
+local function getInstanceCFrame(inst)
+    if inst:IsA("BasePart") then
+        return inst.CFrame
+    elseif inst:IsA("Model") then
+        local ok, cf = pcall(function()
+            return inst:GetPivot()
+        end)
+        if ok and cf then return cf end
+    end
+end
+
+local function isInCurrentDungeon(inst)
+    local dungeonId = player:GetAttribute("DungeonId")
+    if not dungeonId then return true end
+
+    local dungeonRoot = getCurrentDungeonRoot()
+    if dungeonRoot then
+        return inst == dungeonRoot or inst:IsDescendantOf(dungeonRoot)
+    end
+
+    local current = inst
+    while current and current ~= workspace do
+        if tostring(current.Name) == tostring(dungeonId) then
+            return true
+        end
+        current = current.Parent
+    end
+
+    return false
+end
+
+local function textHasGiantGift(value)
+    local text = string.lower(tostring(value or ""))
+    return text:find("giant", 1, true) ~= nil and text:find("gift", 1, true) ~= nil
+end
+
+local function isGiantGiftNearby(root, dungeonRoot)
+    local box = getNearestBox()
+    if box then
+        local found = false
+        pcall(function() found = found or textHasGiantGift(box.Id) end)
+        pcall(function() found = found or textHasGiantGift(box.Name) end)
+        pcall(function() found = found or textHasGiantGift(box.ModelId) end)
+        pcall(function() found = found or (box.Model and textHasGiantGift(box.Model.Name)) end)
+        pcall(function() found = found or (box.Instance and textHasGiantGift(box.Instance.Name)) end)
+        if found then return true end
+    end
+
+    for _, inst in ipairs((dungeonRoot or workspace):GetDescendants()) do
+        if textHasGiantGift(inst.Name) then
+            local cf = getInstanceCFrame(inst)
+            if cf and (cf.Position - root.Position).Magnitude <= 260 then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+local function disableGiantGiftPillars()
+    if not State.noGiantGiftPillars then return end
+    if os.clock() - lastGiantGiftPillarCleanupAt < 2 then return end
+    lastGiantGiftPillarCleanupAt = os.clock()
+
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local dungeonRoot = getCurrentDungeonRoot()
+    if not isGiantGiftNearby(root, dungeonRoot) then return end
+
+    for _, inst in ipairs((dungeonRoot or workspace):GetDescendants()) do
+        if inst:IsA("BasePart") then
+            local fullName = string.lower(inst:GetFullName())
+            local isPillar = fullName:find("pillar", 1, true)
+                or fullName:find("pilar", 1, true)
+                or fullName:find("column", 1, true)
+                or fullName:find("post", 1, true)
+                or fullName:find("cylinder", 1, true)
+                or fullName:find("cilind", 1, true)
+
+            if isPillar and (inst.Position - root.Position).Magnitude <= 280 then
+                pcall(function()
+                    inst.CanCollide = false
+                    inst.CanTouch = false
+                    inst.Transparency = math.max(inst.Transparency, 0.75)
+                end)
+            end
+        end
+    end
+end
+
 local function dungeonMoveAssist()
+    disableGiantGiftPillars()
+
     local box = getNearestBox()
 
     if box and box.CFrame then
@@ -1369,31 +1480,12 @@ local function dungeonMoveAssist()
     end
 
     local function getInstPos(inst)
-        if inst:IsA("BasePart") then
-            return inst.Position, inst.CFrame
-        elseif inst:IsA("Model") then
-            local ok, cf = pcall(function()
-                return inst:GetPivot()
-            end)
-            if ok and cf then
-                return cf.Position, cf
-            end
-        end
+        local cf = getInstanceCFrame(inst)
+        if cf then return cf.Position, cf end
     end
 
     local function isInMyDungeon(inst)
-        local dungeonId = player:GetAttribute("DungeonId")
-        if not dungeonId then return true end
-
-        local current = inst
-        while current and current ~= workspace do
-            if tostring(current.Name) == tostring(dungeonId) then
-                return true
-            end
-            current = current.Parent
-        end
-
-        return true
+        return isInCurrentDungeon(inst)
     end
 
     local nearestDoor
@@ -1402,11 +1494,12 @@ local function dungeonMoveAssist()
     local now = os.clock()
 
     for _, inst in ipairs(CollectionService:GetTagged("DungeonDoor")) do
-        if isInMyDungeon(inst) and inst:GetAttribute("Open") ~= false and (not dungeonVisitedDoors[inst] or now - dungeonVisitedDoors[inst] > 18) then
+        if isInMyDungeon(inst) and inst:GetAttribute("Open") ~= false and not dungeonVisitedDoors[inst] then
             local pos, cf = getInstPos(inst)
             if pos then
                 local dist = (pos - root.Position).Magnitude
-                if dist > 10 and dist < nearestDist and dist < 260 then
+                local forwardDot = dungeonLastAdvanceDirection and (pos - root.Position):Dot(dungeonLastAdvanceDirection) or 0
+                if dist > 10 and dist < nearestDist and dist < 260 and forwardDot > -35 then
                     nearestDoor = inst
                     nearestDoorCf = cf
                     nearestDist = dist
@@ -1417,11 +1510,12 @@ local function dungeonMoveAssist()
 
     for _, inst in ipairs(workspace:GetDescendants()) do
         local name = string.lower(inst.Name)
-        if (name:find("door") or name:find("portal") or name:find("exit") or name:find("elevator")) and isInMyDungeon(inst) and (not dungeonVisitedDoors[inst] or now - dungeonVisitedDoors[inst] > 18) then
+        if (name:find("door") or name:find("portal") or name:find("exit") or name:find("elevator")) and isInMyDungeon(inst) and not dungeonVisitedDoors[inst] then
             local pos, cf = getInstPos(inst)
             if pos then
                 local dist = (pos - root.Position).Magnitude
-                if dist > 10 and dist < nearestDist and dist < 260 then
+                local forwardDot = dungeonLastAdvanceDirection and (pos - root.Position):Dot(dungeonLastAdvanceDirection) or 0
+                if dist > 10 and dist < nearestDist and dist < 260 and forwardDot > -35 then
                     nearestDoor = inst
                     nearestDoorCf = cf
                     nearestDist = dist
@@ -1440,6 +1534,9 @@ local function dungeonMoveAssist()
         if os.clock() - lastDungeonAdvanceAt >= 3 then
             lastDungeonAdvanceAt = os.clock()
             dungeonVisitedDoors[nearestDoor] = os.clock()
+            dungeonLastAdvanceDirection = direction
+            dungeonLastTargetPos = target
+            dungeonRoomLockUntil = os.clock() + 8
             root.CFrame = CFrame.new(target, target + direction)
         end
 
@@ -1453,9 +1550,14 @@ local function dungeonMoveAssist()
         local name = string.lower(inst.Name)
         if inst:IsA("BasePart") and (name:find("floor") or name:find("room") or name:find("path")) and isInMyDungeon(inst) then
             local dist = (inst.Position - root.Position).Magnitude
-            if dist < nearestDist and dist > 25 and dist < 320 then
+            local forwardDot = dungeonLastAdvanceDirection and (inst.Position - root.Position):Dot(dungeonLastAdvanceDirection) or 0
+            local isBehind = dungeonLastAdvanceDirection and forwardDot < -12
+            local lockedNeedsForward = os.clock() < dungeonRoomLockUntil and dungeonLastAdvanceDirection and forwardDot < 6
+            local score = dist - math.max(forwardDot, 0) * 0.25
+
+            if not isBehind and not lockedNeedsForward and score < nearestDist and dist > 25 and dist < 320 then
                 nearestRoomPart = inst
-                nearestDist = dist
+                nearestDist = score
             end
         end
     end
@@ -1466,6 +1568,7 @@ local function dungeonMoveAssist()
 
         if os.clock() - lastDungeonAdvanceAt >= 4 then
             lastDungeonAdvanceAt = os.clock()
+            dungeonLastTargetPos = target
             root.CFrame = CFrame.new(target)
         end
     end
@@ -1653,6 +1756,9 @@ pcall(function()
         currentDungeonId = nil
         dungeonCurrentPerkTeamMode = nil
         dungeonBossLocked = false
+        dungeonLastAdvanceDirection = nil
+        dungeonLastTargetPos = nil
+        dungeonRoomLockUntil = 0
 
         pcall(function()
             if result and result.Slots then
@@ -1900,6 +2006,7 @@ DungeonTab:CreateDropdown({ Name = I.globe .. " Mundo da Dungeon", Options = { "
 DungeonTab:CreateDropdown({ Name = I.fire .. " Dificuldade", Options = { "Easy", "Medium", "Hard" }, CurrentOption = { "Easy" }, MultipleOptions = false, Flag = "DungeonDifficulty", Callback = function(opt) selectedDungeonDifficulty = opt[1] end })
 DungeonTab:CreateToggle({ Name = I.sword .. " Auto Dungeon", CurrentValue = false, Flag = "AutoDungeon", Callback = function(v) State.autoDungeon = v if v then State.autoAttackBoxes = true dungeonCurrentPerkTeamMode = nil updateDungeonPerkTeam(true) end end })
 DungeonTab:CreateToggle({ Name = I.gift .. " Auto Claim Dungeon Results", CurrentValue = true, Flag = "AutoClaimDungeonResults", Callback = function(v) State.autoClaimDungeonResults = v end })
+DungeonTab:CreateToggle({ Name = I.shield .. " No Pillars Giant Gift", CurrentValue = true, Flag = "NoGiantGiftPillars", Callback = function(v) State.noGiantGiftPillars = v end })
 DungeonTab:CreateButton({ Name = I.door .. " Entrar Dungeon Agora", Callback = joinDungeonQueue })
 DungeonTab:CreateButton({ Name = I.fast .. " Skip Queue Agora", Callback = skipDungeonQueue })
 DungeonTab:CreateButton({ Name = I.gift .. " Claim Results Agora", Callback = claimDungeonResults })
@@ -2042,8 +2149,12 @@ task.spawn(function()
             if dungeonId then
                 if tostring(dungeonId) ~= tostring(currentDungeonId) then
                     currentDungeonId = dungeonId
+                    dungeonVisitedDoors = {}
                     dungeonCurrentPerkTeamMode = nil
                     dungeonBossLocked = false
+                    dungeonLastAdvanceDirection = nil
+                    dungeonLastTargetPos = nil
+                    dungeonRoomLockUntil = 0
                     updateDungeonPerkTeam(true)
                 else
                     updateDungeonPerkTeam(false)
@@ -2056,6 +2167,9 @@ task.spawn(function()
                 currentDungeonId = nil
                 dungeonCurrentPerkTeamMode = nil
                 dungeonBossLocked = false
+                dungeonLastAdvanceDirection = nil
+                dungeonLastTargetPos = nil
+                dungeonRoomLockUntil = 0
                 joinDungeonQueue()
                 task.wait(0.25)
                 skipDungeonQueue()
