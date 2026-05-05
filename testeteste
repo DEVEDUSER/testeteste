@@ -47,6 +47,7 @@ local StateUtil = safeRequire(SharedFolder and SharedFolder:FindFirstChild("Stat
 local StatsModule = safeRequire(SharedFolder and SharedFolder:FindFirstChild("StatsModule"))
 local AreaData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("AreaData"))
 local GameConfig = safeRequire(SharedFolder and SharedFolder:FindFirstChild("GameConfig"))
+local UniverseData = safeRequire(SharedFolder and SharedFolder:FindFirstChild("UniverseData"))
 local BattlePassUtil = safeRequire(SharedUtilFolder and SharedUtilFolder:FindFirstChild("BattlePassUtil"))
 local BoxController = safeRequire(ControllersFolder and ControllersFolder:FindFirstChild("BoxController"))
 
@@ -138,6 +139,7 @@ local State = {
     autoDungeonTeamSwap = true,
     noGiantGiftPillars = true,
     autoCollectTreasure = false,
+    autoClaimChest = false,
     autoFarmIndex = false,
 
     autoEasterCrate = false,
@@ -234,6 +236,7 @@ local lastCloseAt = 0
 local lastRewardAt = 0
 local lastPerkAt = 0
 local lastTreasureAt = 0
+local lastChestAt = 0
 
 local Stats = {
     startedAt = os.clock(),
@@ -253,6 +256,7 @@ local Stats = {
     merchantByName = {},
     eggsCollected = 0,
     treasuresCollected = 0,
+    chestsClaimed = 0,
     dungeonsCompleted = 0,
     indexTargetArea = 0,
     indexMissingHats = 0,
@@ -1207,6 +1211,101 @@ local function collectAllTreasures()
     notify(I.gift .. " Treasure", "Tentou coletar " .. tostring(collected) .. " tesouros.", 3)
 end
 
+local function getChestRewardKeys(chestModel)
+    local keys = {}
+    local function add(value)
+        value = tostring(value or "")
+        if value ~= "" then table.insert(keys, value) end
+    end
+
+    local name = chestModel and chestModel.Name or ""
+    local lower = string.lower(name)
+
+    add(name)
+    if not name:match("^Chest") then add("Chest" .. name) end
+
+    if lower:find("coin", 1, true) then
+        local currency
+        pcall(function()
+            local world = UniverseData and UniverseData.Get and UniverseData.Get(UniverseData.ID)
+            currency = world and world.Currency
+        end)
+        add("ChestCoin")
+        if currency then add("Chest" .. tostring(currency)) end
+    end
+
+    if lower:find("gem", 1, true) then add("ChestGem") end
+    if lower:find("vip", 1, true) then add("ChestVip") end
+    if lower:find("misc", 1, true) then add("ChestMisc") end
+    if lower:find("hat", 1, true) or lower:find("unique", 1, true) then add("ChestHat") end
+
+    return keys
+end
+
+local function isChestAvailable(chestModel)
+    local data = PlayerData and PlayerData.data
+    local timed = data and data.TimedRewards
+    if not timed then return true end
+
+    local now = Clock and Clock.now and Clock.now() or os.time()
+    for _, key in ipairs(getChestRewardKeys(chestModel)) do
+        local readyAt = timed[key]
+        if readyAt == nil or readyAt <= now then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function collectAllChests(silent)
+    local remote = RF:FindFirstChild("ClaimTimedReward")
+    if not remote then
+        if not silent then notify(I.warn .. " Chests", "Remote ClaimTimedReward nao encontrado.", 3) end
+        return
+    end
+
+    local char = player.Character or player.CharacterAdded:Wait()
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local tried = {}
+    local claimed = 0
+
+    local function tryChest(chestModel)
+        if not chestModel or tried[chestModel] then return end
+        tried[chestModel] = true
+        if not isChestAvailable(chestModel) then return end
+
+        pcall(function()
+            local hitbox = chestModel:FindFirstChild("ChestHitbox", true)
+            local pos = getTaggedPosition(hitbox or chestModel)
+            if root and pos then
+                root.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+                task.wait(0.12)
+            end
+
+            remote:InvokeServer(chestModel)
+            claimed = claimed + 1
+        end)
+    end
+
+    for _, inst in ipairs(CollectionService:GetTagged("Chest")) do
+        tryChest(inst.Parent)
+        task.wait(0.05)
+    end
+
+    for _, inst in ipairs(workspace:GetDescendants()) do
+        if inst.Name == "ChestHitbox" then
+            tryChest(inst.Parent)
+            task.wait(0.05)
+        end
+    end
+
+    Stats.chestsClaimed = Stats.chestsClaimed + claimed
+    if not silent then
+        notify(I.gift .. " Chests", "Tentou coletar " .. tostring(claimed) .. " baus.", 3)
+    end
+end
+
 local function getDungeonQueueZone()
     local tagged = CollectionService:GetTagged("DungeonQueue")
 
@@ -1626,6 +1725,7 @@ local function buildWebhookReport()
     table.insert(lines, "Tickets: " .. tostring(Stats.ticketsGained))
     table.insert(lines, "Ovos EggHunt: " .. tostring(Stats.eggsCollected))
     table.insert(lines, "Treasures: " .. tostring(Stats.treasuresCollected))
+    table.insert(lines, "Chests: " .. tostring(Stats.chestsClaimed))
     table.insert(lines, "Dungeons completas: " .. tostring(Stats.dungeonsCompleted))
     if Stats.indexTargetArea and Stats.indexTargetArea > 0 then
         table.insert(lines, "Auto Index: area " .. tostring(Stats.indexTargetArea) .. " | hats faltando: " .. tostring(Stats.indexMissingHats))
@@ -1826,7 +1926,7 @@ FarmTab:CreateToggle({ Name = I.egg .. " Auto Easter Rush", CurrentValue = false
 FarmTab:CreateToggle({ Name = I.close .. " Auto Close", CurrentValue = false, Flag = "AutoClose", Callback = function(v) State.autoClose = v end })
 FarmTab:CreateToggle({ Name = I.check .. " Auto Close Rush Results", CurrentValue = false, Flag = "AutoCloseRushResults", Callback = function(v) State.autoCloseRushResults = v end })
 FarmTab:CreateToggle({ Name = I.shield .. " NeverGlitch", CurrentValue = false, Flag = "NeverGlitch", Callback = function(v) State.autoPerk = v end })
-FarmTab:CreateButton({ Name = I.boom .. " BOMB RAIN > NOT IS PERK", Callback = function() pcall(function() RE.PromptProductPurchase:FireServer("BombRainInstant") end) end })
+FarmTab:CreateButton({ Name = I.boom .. " BOMB STRIKE", Callback = function() pcall(function() RE.PromptProductPurchase:FireServer("BombRainInstant") end) end })
 
 EventTab:CreateSection(I.party .. " Mole Merchant")
 EventTab:CreateInput({
@@ -1852,9 +1952,6 @@ EventTab:CreateToggle({ Name = "EventBooster", CurrentValue = false, Flag = "Eve
 EventTab:CreateSection(I.egg .. " EggHunt")
 EventTab:CreateButton({ Name = I.egg .. " Collect All EggHunt Eggs", Callback = collectAllEggHuntEggs })
 EventTab:CreateButton({ Name = I.gift .. " Claim EggHunt Milestones", Callback = claimEggHuntMilestones })
-EventTab:CreateSection(I.gift .. " Treasure")
-EventTab:CreateToggle({ Name = I.gift .. " Auto Collect Treasure", CurrentValue = false, Flag = "AutoCollectTreasure", Callback = function(v) State.autoCollectTreasure = v end })
-EventTab:CreateButton({ Name = I.gift .. " Collect All Treasure", Callback = collectAllTreasures })
 
 RewardsTab:CreateSection(I.gift .. " Rewards")
 RewardsTab:CreateToggle({ Name = I.money .. " Auto Claim", CurrentValue = false, Flag = "AutoClaim", Callback = function(v) State.autoClaim = v end })
@@ -1864,6 +1961,11 @@ RewardsTab:CreateToggle({ Name = I.medal .. " Achievements", CurrentValue = fals
 RewardsTab:CreateToggle({ Name = I.quest .. " ClaimDamegeQuest", CurrentValue = false, Flag = "ClaimDamageQuest", Callback = function(v) State.autoClaimDamageQuest = v end })
 RewardsTab:CreateToggle({ Name = I.gift .. " Auto Claim All Box Pass", CurrentValue = false, Flag = "AutoBoxPassClaimAll", Callback = function(v) State.autoBoxPassClaimAll = v end })
 RewardsTab:CreateButton({ Name = I.gift .. " Claim All Box Pass Agora", Callback = function() claimAllBoxPassRewards(false) end })
+RewardsTab:CreateSection(I.gift .. " Treasure & Chests")
+RewardsTab:CreateToggle({ Name = I.gift .. " Auto Collect Treasure", CurrentValue = false, Flag = "AutoCollectTreasure", Callback = function(v) State.autoCollectTreasure = v end })
+RewardsTab:CreateButton({ Name = I.gift .. " Collect All Treasure", Callback = collectAllTreasures })
+RewardsTab:CreateToggle({ Name = I.gift .. " Auto Claim Chest", CurrentValue = false, Flag = "AutoClaimChest", Callback = function(v) State.autoClaimChest = v end })
+RewardsTab:CreateButton({ Name = I.gift .. " Claim All Chests Agora", Callback = function() collectAllChests(false) end })
 
 CratesTab:CreateSection(I.box .. " Crates")
 CratesTab:CreateInput({ Name = I.box .. " Quantidade", PlaceholderText = "Ex: 10", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) crateAmount = n and n > 0 and n or 1 end })
@@ -2210,6 +2312,11 @@ task.spawn(function()
         if State.autoCollectTreasure and os.clock() - lastTreasureAt >= 12 then
             lastTreasureAt = os.clock()
             collectAllTreasures()
+        end
+
+        if State.autoClaimChest and os.clock() - lastChestAt >= 20 then
+            lastChestAt = os.clock()
+            collectAllChests(true)
         end
     end
 end)
