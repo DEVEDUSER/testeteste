@@ -246,6 +246,13 @@ lastWebhookAt = os.clock()
 
 autoFavoriteRareDrops = false
 autoFavoriteGoodPerks = false
+autoFavoritePerfectPerks = false
+autoFavoriteRareStatPerks = false
+autoFavoriteEggSplossion = false
+instantFavoriteDelay = 0.2
+perfectStatQualityMin = 0.999
+rareStatQualityMin = 0.9
+veryRareStatQualityMin = 0.95
 perkFavoriteMinStat = 4.0
 perkFavoriteMinTotalStat = 0
 
@@ -1187,6 +1194,267 @@ function getPerkStatSum(invItem)
     return total
 end
 
+function normalizeSearchToken(value)
+    return string.lower(tostring(value or "")):gsub("[%s%p_]+", "")
+end
+
+function textMatchesExactToken(value, wanted)
+    return normalizeSearchToken(value) == wanted
+end
+
+function tableHasExactToken(value, wanted, depth, seen)
+    depth = depth or 0
+    if depth > 6 then return false end
+
+    local valueType = type(value)
+    if valueType == "string" or valueType == "number" then
+        return textMatchesExactToken(value, wanted)
+    end
+
+    if valueType ~= "table" then return false end
+    seen = seen or {}
+    if seen[value] then return false end
+    seen[value] = true
+
+    for k, v in pairs(value) do
+        if tableHasExactToken(k, wanted, depth + 1, seen) or tableHasExactToken(v, wanted, depth + 1, seen) then
+            return true
+        end
+    end
+
+    return false
+end
+
+function getRareQualityName(value)
+    local token = normalizeSearchToken(value)
+    if token == "veryrare" then return "Very Rare" end
+    if token == "rare" then return "Rare" end
+    return nil
+end
+
+function getPerkBoosts(invItem)
+    if not invItem then return nil end
+    if type(invItem.Boosts) == "table" then return invItem.Boosts end
+    if type(invItem.boosts) == "table" then return invItem.boosts end
+    if type(invItem.Stats) == "table" then return invItem.Stats end
+    if type(invItem.stats) == "table" then return invItem.stats end
+
+    if type(invItem.Info) == "table" then
+        if type(invItem.Info.Boosts) == "table" then return invItem.Info.Boosts end
+        if type(invItem.Info.boosts) == "table" then return invItem.Info.boosts end
+    end
+
+    return nil
+end
+
+function calculateBoostQuality(boostId, value)
+    if type(value) ~= "number" or not StatsModule or type(StatsModule.GetBoostLookup) ~= "function" then return nil end
+
+    local ok, lookup = pcall(function()
+        return StatsModule.GetBoostLookup()
+    end)
+    if not ok or type(lookup) ~= "table" then return nil end
+
+    local boostData = lookup[boostId]
+    if type(boostData) ~= "table" or type(boostData.Min) ~= "number" or type(boostData.Max) ~= "number" then return nil end
+    if boostData.Max == boostData.Min then return nil end
+
+    if value < boostData.Min or boostData.Max < value then
+        return 1
+    end
+
+    return (value - boostData.Min) / (boostData.Max - boostData.Min)
+end
+
+function getCalculatedPerkQualityReason(invItem)
+    local boosts = getPerkBoosts(invItem)
+    if type(boosts) ~= "table" then return nil end
+
+    for boostId, value in pairs(boosts) do
+        local quality = calculateBoostQuality(boostId, value)
+        if quality then
+            local statName = tostring(boostId)
+
+            if autoFavoritePerfectPerks and quality >= perfectStatQualityMin then
+                return "Perfect " .. statName
+            end
+
+            if autoFavoriteRareStatPerks and quality >= veryRareStatQualityMin then
+                return "Stat Very Rare " .. statName
+            end
+
+            if autoFavoriteRareStatPerks and quality >= rareStatQualityMin then
+                return "Stat Rare " .. statName
+            end
+        end
+    end
+
+    return nil
+end
+
+function scanRareStatQuality(value, depth, seen)
+    depth = depth or 0
+    if depth > 6 then return nil end
+
+    local valueType = type(value)
+    if valueType == "string" or valueType == "number" then
+        return getRareQualityName(value)
+    end
+
+    if valueType ~= "table" then return nil end
+    seen = seen or {}
+    if seen[value] then return nil end
+    seen[value] = true
+
+    for k, v in pairs(value) do
+        local keyQuality = getRareQualityName(k)
+        if keyQuality and v == true then
+            return keyQuality
+        end
+
+        local valueQuality = scanRareStatQuality(v, depth + 1, seen)
+        if valueQuality then
+            return valueQuality
+        end
+    end
+
+    return nil
+end
+
+function getRareStatQualityReason(invItem)
+    if not invItem then return nil end
+
+    local statContainers = {
+        invItem.Stats,
+        invItem.stats,
+        invItem.Stat,
+        invItem.stat,
+        invItem.Boosts,
+        invItem.boosts,
+        invItem.Modifiers,
+        invItem.modifiers,
+        invItem.StatQuality,
+        invItem.statQuality,
+        invItem.StatQualities,
+        invItem.statQualities,
+        invItem.StatsQuality,
+        invItem.statsQuality,
+        invItem.Qualities,
+        invItem.qualities,
+        invItem.Rolls,
+        invItem.rolls,
+    }
+
+    for _, container in ipairs(statContainers) do
+        local quality = scanRareStatQuality(container, 0, {})
+        if quality then return quality end
+    end
+
+    return nil
+end
+
+function isEggSplossionPerk(invItem)
+    if not invItem then return false end
+
+    local texts = {}
+    local function addText(value)
+        if value ~= nil then
+            table.insert(texts, value)
+        end
+    end
+
+    addText(invItem.ItemId)
+    addText(invItem.Id)
+    addText(invItem.Name)
+    addText(invItem.DisplayName)
+    addText(invItem.PerkId)
+    addText(invItem.Type)
+
+    local data = getItemData(invItem)
+    if data then
+        addText(data.ItemId)
+        addText(data.Id)
+        addText(data.Name)
+        addText(data.DisplayName)
+    end
+
+    for _, text in ipairs(texts) do
+        local token = normalizeSearchToken(text)
+        if token:find("eggsplossion", 1, true)
+            or token:find("eggsplosion", 1, true)
+            or token:find("eggexplosion", 1, true)
+            or token:find("eggsplos", 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+function getAutoFavoritePerkReason(invItem)
+    if not invItem then return nil end
+
+    if autoFavoriteEggSplossion and isEggSplossionPerk(invItem) then
+        return "EggSplossion"
+    end
+
+    local calculatedQuality = getCalculatedPerkQualityReason(invItem)
+    if calculatedQuality then
+        return calculatedQuality
+    end
+
+    if autoFavoritePerfectPerks and tableHasExactToken(invItem, "perfect", 0, {}) then
+        return "Quality Perfect"
+    end
+
+    if autoFavoriteRareStatPerks then
+        local quality = getRareStatQualityReason(invItem)
+        if quality then
+            return "Stat " .. quality
+        end
+    end
+
+    if autoFavoriteGoodPerks and getBestPerkStat(invItem) >= perkFavoriteMinStat then
+        return "Score >= " .. tostring(perkFavoriteMinStat)
+    end
+
+    if autoFavoriteGoodPerks and perkFavoriteMinTotalStat > 0 and getPerkStatSum(invItem) >= perkFavoriteMinTotalStat then
+        return "Soma >= " .. tostring(perkFavoriteMinTotalStat)
+    end
+
+    return nil
+end
+
+function protectPerkItem(uid, invItem, reason)
+    if not uid or not invItem then return false end
+
+    local wasProtected = invItem.IsFavorite or invItem.Locked
+    favoriteOrLockItem("Perks", uid)
+    invItem.IsFavorite = true
+    invItem.Locked = true
+
+    if not wasProtected then
+        Stats.perksFavorited = Stats.perksFavorited + 1
+        notify(I.star .. " Perk protegido", tostring(reason or "Auto Favorite") .. " | " .. tostring(invItem.ItemId or uid), 3)
+    end
+
+    return true
+end
+
+function protectPerkInventoryInstant()
+    if not (autoFavoritePerfectPerks or autoFavoriteRareStatPerks or autoFavoriteEggSplossion or autoFavoriteGoodPerks) then return end
+    if not PlayerData or not PlayerData.data or not PlayerData.data.Perks then return end
+
+    for uid, invItem in pairs(PlayerData.data.Perks) do
+        if invItem and not invItem.IsFavorite and not invItem.Locked then
+            local reason = getAutoFavoritePerkReason(invItem)
+            if reason then
+                protectPerkItem(uid, invItem, reason)
+            end
+        end
+    end
+end
+
 function isRareDrop(invItem)
     if not invItem then return false end
     local txt = string.lower(tostring(invItem.ItemId or invItem.Id or invItem.Name or ""))
@@ -1233,18 +1501,11 @@ function protectSpecialItems()
                     invItem.IsFavorite = true
                     invItem.Locked = true
                     if not wasProtected then Stats.rareDropsProtected = Stats.rareDropsProtected + 1 end
-                elseif category == "Perks" and autoFavoriteGoodPerks and getBestPerkStat(invItem) >= perkFavoriteMinStat then
-                    local wasProtected = invItem.IsFavorite or invItem.Locked
-                    favoriteOrLockItem(category, uid)
-                    invItem.IsFavorite = true
-                    invItem.Locked = true
-                    if not wasProtected then Stats.perksFavorited = Stats.perksFavorited + 1 end
-                elseif category == "Perks" and autoFavoriteGoodPerks and perkFavoriteMinTotalStat > 0 and getPerkStatSum(invItem) >= perkFavoriteMinTotalStat then
-                    local wasProtected = invItem.IsFavorite or invItem.Locked
-                    favoriteOrLockItem(category, uid)
-                    invItem.IsFavorite = true
-                    invItem.Locked = true
-                    if not wasProtected then Stats.perksFavorited = Stats.perksFavorited + 1 end
+                elseif category == "Perks" then
+                    local reason = getAutoFavoritePerkReason(invItem)
+                    if reason then
+                        protectPerkItem(uid, invItem, reason)
+                    end
                 end
             end
         end
@@ -1292,18 +1553,12 @@ function sellInventoryCategory(category)
             protected = true
         end
 
-        if category == "Perks" and autoFavoriteGoodPerks and getBestPerkStat(invItem) >= perkFavoriteMinStat then
-            favoriteOrLockItem(category, uid)
-            invItem.IsFavorite = true
-            invItem.Locked = true
-            protected = true
-        end
-
-        if category == "Perks" and autoFavoriteGoodPerks and perkFavoriteMinTotalStat > 0 and getPerkStatSum(invItem) >= perkFavoriteMinTotalStat then
-            favoriteOrLockItem(category, uid)
-            invItem.IsFavorite = true
-            invItem.Locked = true
-            protected = true
+        if category == "Perks" then
+            local reason = getAutoFavoritePerkReason(invItem)
+            if reason then
+                protectPerkItem(uid, invItem, reason)
+                protected = true
+            end
         end
 
         if not protected and shouldSellItem(invItem, category) then
@@ -3032,6 +3287,9 @@ function saveConfig()
         webhookDelayMinutes = webhookDelayMinutes,
         autoFavoriteRareDrops = autoFavoriteRareDrops,
         autoFavoriteGoodPerks = autoFavoriteGoodPerks,
+        autoFavoritePerfectPerks = autoFavoritePerfectPerks,
+        autoFavoriteRareStatPerks = autoFavoriteRareStatPerks,
+        autoFavoriteEggSplossion = autoFavoriteEggSplossion,
         perkFavoriteMinStat = perkFavoriteMinStat,
         perkFavoriteMinTotalStat = perkFavoriteMinTotalStat,
         skippedIndexAreas = skippedIndexAreas,
@@ -3094,6 +3352,9 @@ function loadConfig()
     webhookDelayMinutes = data.webhookDelayMinutes or webhookDelayMinutes
     autoFavoriteRareDrops = data.autoFavoriteRareDrops == true
     autoFavoriteGoodPerks = data.autoFavoriteGoodPerks == true
+    autoFavoritePerfectPerks = data.autoFavoritePerfectPerks == true
+    autoFavoriteRareStatPerks = data.autoFavoriteRareStatPerks == true
+    autoFavoriteEggSplossion = data.autoFavoriteEggSplossion == true
     perkFavoriteMinStat = data.perkFavoriteMinStat or perkFavoriteMinStat
     perkFavoriteMinTotalStat = data.perkFavoriteMinTotalStat or perkFavoriteMinTotalStat
     if type(data.skippedIndexAreas) == "table" then skippedIndexAreas = data.skippedIndexAreas end
@@ -3421,6 +3682,9 @@ CratesTab:CreateButton({
 AutoSellTab:CreateSection(I.shield .. " Protecao")
 AutoSellTab:CreateToggle({ Name = I.boom .. " Favoritar EggRain/BombRain", CurrentValue = false, Flag = "AutoFavoriteRareDrops", Callback = function(v) autoFavoriteRareDrops = v end })
 AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perks bons", CurrentValue = false, Flag = "AutoFavoriteGoodPerks", Callback = function(v) autoFavoriteGoodPerks = v end })
+AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perfect Quality", CurrentValue = false, Flag = "AutoFavoritePerfectPerks", Callback = function(v) autoFavoritePerfectPerks = v end })
+AutoSellTab:CreateToggle({ Name = I.chart .. " Favoritar Stats Rare/Very Rare", CurrentValue = false, Flag = "AutoFavoriteRareStatPerks", Callback = function(v) autoFavoriteRareStatPerks = v end })
+AutoSellTab:CreateToggle({ Name = I.egg .. " Favoritar EggSplossion", CurrentValue = false, Flag = "AutoFavoriteEggSplossion", Callback = function(v) autoFavoriteEggSplossion = v end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Stat minimo do Perk", PlaceholderText = "Padrao: 4.0", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n then perkFavoriteMinStat = n end end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Soma minima dos Stats", PlaceholderText = "0 = desligado", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0 then perkFavoriteMinTotalStat = n end end })
 AutoSellTab:CreateInput({ Name = I.clock .. " Delay Auto Sell", PlaceholderText = "Padrao: 5", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 1 then autoSellDelay = n end end })
@@ -3680,6 +3944,14 @@ task.spawn(function()
                     task.wait(0.15)
                 end
             end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(instantFavoriteDelay) do
+        if not State.paused then
+            safeRun("InstantFavoritePerks", protectPerkInventoryInstant)
         end
     end
 end)
