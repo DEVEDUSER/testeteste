@@ -248,6 +248,7 @@ autoFavoriteRareDrops = false
 autoFavoriteGoodPerks = false
 autoFavoritePerfectPerks = false
 autoFavoriteRareStatPerks = false
+autoFavoriteUniqueStatPerks = false
 autoFavoriteEggSplossion = false
 instantFavoriteDelay = 0.2
 perfectStatQualityMin = 0.999
@@ -1266,6 +1267,24 @@ function calculateBoostQuality(boostId, value)
     return (value - boostData.Min) / (boostData.Max - boostData.Min)
 end
 
+function getUniquePerkStatReason(invItem)
+    local boosts = getPerkBoosts(invItem)
+    if type(boosts) ~= "table" or not StatsModule or type(StatsModule.GetBoostLookup) ~= "function" then return nil end
+
+    local ok, lookup = pcall(function()
+        return StatsModule.GetBoostLookup()
+    end)
+    if not ok or type(lookup) ~= "table" then return nil end
+
+    for boostId, _ in pairs(boosts) do
+        if lookup[boostId] == nil then
+            return "Unique Stat " .. tostring(boostId)
+        end
+    end
+
+    return nil
+end
+
 function getCalculatedPerkQualityReason(invItem)
     local boosts = getPerkBoosts(invItem)
     if type(boosts) ~= "table" then return nil end
@@ -1398,6 +1417,13 @@ function getAutoFavoritePerkReason(invItem)
         return "EggSplossion"
     end
 
+    if autoFavoriteUniqueStatPerks then
+        local uniqueReason = getUniquePerkStatReason(invItem)
+        if uniqueReason then
+            return uniqueReason
+        end
+    end
+
     local calculatedQuality = getCalculatedPerkQualityReason(invItem)
     if calculatedQuality then
         return calculatedQuality
@@ -1442,7 +1468,7 @@ function protectPerkItem(uid, invItem, reason)
 end
 
 function protectPerkInventoryInstant()
-    if not (autoFavoritePerfectPerks or autoFavoriteRareStatPerks or autoFavoriteEggSplossion or autoFavoriteGoodPerks) then return end
+    if not (autoFavoritePerfectPerks or autoFavoriteRareStatPerks or autoFavoriteUniqueStatPerks or autoFavoriteEggSplossion or autoFavoriteGoodPerks) then return end
     if not PlayerData or not PlayerData.data or not PlayerData.data.Perks then return end
 
     for uid, invItem in pairs(PlayerData.data.Perks) do
@@ -3289,6 +3315,7 @@ function saveConfig()
         autoFavoriteGoodPerks = autoFavoriteGoodPerks,
         autoFavoritePerfectPerks = autoFavoritePerfectPerks,
         autoFavoriteRareStatPerks = autoFavoriteRareStatPerks,
+        autoFavoriteUniqueStatPerks = autoFavoriteUniqueStatPerks,
         autoFavoriteEggSplossion = autoFavoriteEggSplossion,
         perkFavoriteMinStat = perkFavoriteMinStat,
         perkFavoriteMinTotalStat = perkFavoriteMinTotalStat,
@@ -3354,6 +3381,7 @@ function loadConfig()
     autoFavoriteGoodPerks = data.autoFavoriteGoodPerks == true
     autoFavoritePerfectPerks = data.autoFavoritePerfectPerks == true
     autoFavoriteRareStatPerks = data.autoFavoriteRareStatPerks == true
+    autoFavoriteUniqueStatPerks = data.autoFavoriteUniqueStatPerks == true
     autoFavoriteEggSplossion = data.autoFavoriteEggSplossion == true
     perkFavoriteMinStat = data.perkFavoriteMinStat or perkFavoriteMinStat
     perkFavoriteMinTotalStat = data.perkFavoriteMinTotalStat or perkFavoriteMinTotalStat
@@ -3684,6 +3712,7 @@ AutoSellTab:CreateToggle({ Name = I.boom .. " Favoritar EggRain/BombRain", Curre
 AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perks bons", CurrentValue = false, Flag = "AutoFavoriteGoodPerks", Callback = function(v) autoFavoriteGoodPerks = v end })
 AutoSellTab:CreateToggle({ Name = I.star .. " Favoritar Perfect Quality", CurrentValue = false, Flag = "AutoFavoritePerfectPerks", Callback = function(v) autoFavoritePerfectPerks = v end })
 AutoSellTab:CreateToggle({ Name = I.chart .. " Favoritar Stats Rare/Very Rare", CurrentValue = false, Flag = "AutoFavoriteRareStatPerks", Callback = function(v) autoFavoriteRareStatPerks = v end })
+AutoSellTab:CreateToggle({ Name = I.sparkles .. " Favoritar Unique Stats", CurrentValue = false, Flag = "AutoFavoriteUniqueStatPerks", Callback = function(v) autoFavoriteUniqueStatPerks = v end })
 AutoSellTab:CreateToggle({ Name = I.egg .. " Favoritar EggSplossion", CurrentValue = false, Flag = "AutoFavoriteEggSplossion", Callback = function(v) autoFavoriteEggSplossion = v end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Stat minimo do Perk", PlaceholderText = "Padrao: 4.0", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n then perkFavoriteMinStat = n end end })
 AutoSellTab:CreateInput({ Name = I.chart .. " Soma minima dos Stats", PlaceholderText = "0 = desligado", RemoveTextAfterFocusLost = false, Callback = function(text) local n = tonumber(text) if n and n >= 0 then perkFavoriteMinTotalStat = n end end })
